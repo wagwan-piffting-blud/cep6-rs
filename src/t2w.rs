@@ -26,6 +26,9 @@ pub(crate) struct Feats {
     pub pre: Option<String>,
     pub numtype: Option<String>,
     pub name: Option<String>,
+    /// Set on the token after a lone direction letter by the say-as address
+    /// reader: "N St" makes that St a street.
+    pub street: bool,
 }
 
 thread_local! {
@@ -91,7 +94,9 @@ impl Cx<'_> {
     }
 
     fn nsw(&self, j: usize) -> String {
-        feat(j, |f| f.nsw.clone()).unwrap_or_default()
+        feat(j, |f| f.nsw.clone()).filter(|s| !s.is_empty())
+            .or_else(|| self.toks.get(j).and_then(|t| t.nsw.clone()))
+            .unwrap_or_default()
     }
 
     fn numtype(&self, j: usize) -> Option<String> {
@@ -424,6 +429,17 @@ fn t2w(cx: &Cx, i: usize, name: &str, depth: usize) -> Vec<Word> {
         return Vec::new();
     }
     let lower = name.to_ascii_lowercase();
+    // the prologue: a token with an nsw goes to the say-as expander first,
+    // and whatever it cannot say falls through to the rules
+    let nsw = cx.nsw(i);
+    if nsw == "words" {
+        return words(&[&lower]);
+    }
+    if !nsw.is_empty() {
+        if let Some(r) = say_as(cx, i, name, &nsw).filter(|r| !r.is_empty()) {
+            return r;
+        }
+    }
     rules_2_20(cx, i, name, &lower, depth)
         .or_else(|| rules_21_50(cx, i, name, &lower, depth))
         .unwrap_or_else(|| rules_51_75(cx, i, name, &lower, depth))
@@ -1585,4 +1601,318 @@ fn state_name(cx: &Cx, i: usize, name: &str) -> Option<Vec<Word>> {
         return Some(words(ws));
     }
     None
+}
+
+// ------------------------------------------------------------------ say-as
+
+/// @0xa3900, what `letters` reads a punctuation mark as. `=` really is "dash".
+const PUNC_NAMES: [(char, &str); 32] = [
+    ('`', "backquote"), ('~', "tilde"), ('!', "exclamation point"), ('@', "at"),
+    ('#', "hash"), ('$', "dollar"), ('%', "percent"), ('^', "carat"), ('&', "ampersand"),
+    ('*', "asterisk"), ('(', "open parenthesis"), (')', "close parenthesis"),
+    ('_', "underscore"), ('-', "dash"), ('=', "dash"), ('+', "plus"),
+    ('[', "open square bracket"), (']', "close square bracket"), ('{', "open bracket"),
+    ('}', "close bracket"), ('\\', "back slash"), ('|', "vertical bar"), (';', "semicolon"),
+    (':', "colon"), ('\'', "apostrophe"), ('"', "quote"), (',', "comma"), ('<', "less than"),
+    ('.', "dot"), ('>', "greater than"), ('/', "slash"), ('?', "question mark"),
+];
+
+/// fn_04022c: a word per character. Unlike flite's it keeps whitespace, and
+/// with `punc` it names punctuation instead of passing it through.
+fn letters(s: &str, punc: bool) -> Vec<Word> {
+    let mut r = Vec::new();
+    for c in s.chars().map(|c| c.to_ascii_lowercase()) {
+        if let Some(d) = c.to_digit(10) {
+            r.push(Word::new(crate::token::DIGIT2NUM[d as usize]));
+        } else if let Some(&(_, w)) = PUNC_NAMES.iter().find(|p| punc && p.0 == c) {
+            r.extend(w.split(' ').map(Word::new));
+        } else if c == 'a' {
+            r.push(Word::new("_a"));
+        } else {
+            r.push(Word::new(&c.to_string()));
+        }
+    }
+    r
+}
+
+/// swift.dll's `cst_val_string_split`: every field, empty ones included.
+fn split_any<'a>(s: &'a str, seps: &str) -> Vec<&'a str> {
+    s.split(|c| seps.contains(c)).collect()
+}
+
+/// @0x42a58, ceplang's reading of a `<say-as>` token's `nsw`. `None` (or
+/// nothing said) sends the token on through the ordinary rules.
+fn say_as(cx: &Cx, i: usize, name: &str, nsw: &str) -> Option<Vec<Word>> {
+    match nsw {
+        "phones" => return Some(words(&[name])),
+        "letters" => return Some(letters(name, false)),
+        "literal" => {
+            let whole = format!("{}{}{}{}", cx.toks[i].ws, cx.pre(i), name, cx.punc(i));
+            return Some(letters(&whole, true));
+        }
+        "measure" => return say_measure(cx, i, name),
+        "address" => return say_address(cx, i, name),
+        _ => {}
+    }
+    if nsw.starts_with("number") {
+        let n = if digits(name) {
+            name.to_string()
+        } else {
+            match exp_roman(name) {
+                0 => return None,
+                v => v.to_string(),
+            }
+        };
+        let kind = if nsw.as_bytes().get(6) == Some(&b':') { &nsw[7..] } else { "" };
+        return Some(match kind {
+            "ordinal" => exp_ordinal(&n),
+            "cardinal" => exp_number(&n),
+            // fn_041b8c; n is digits by now, so this is only ever the number
+            "fraction" => {
+                let p = split_any(&n, "/");
+                match p.get(1) {
+                    Some(d) => cat(exp_number(p[0]), exp_ordinal(d)),
+                    None => exp_number(p[0]),
+                }
+            }
+            "digits" | "digit" => exp_digits(&n),
+            _ => exp_real(&n),
+        });
+    }
+    if nsw.starts_with("date") {
+        let parts = split_any(name, "/-.,");
+        let fmt = if nsw.as_bytes().get(4) == Some(&b':') {
+            &nsw[5..]
+        } else {
+            match parts.len() {
+                3 => {
+                    let s = parts[0];
+                    if crate::rx!("^-?[0-9]+$").is_match(s) && (s.len() == 4 || atoi(s) > 31) {
+                        "ymd"
+                    } else {
+                        "mdy"
+                    }
+                }
+                2 => match atoi(parts[0]) {
+                    v if v > 31 => "ym",
+                    v if v <= 12 => "md",
+                    _ => "dm",
+                },
+                1 => {
+                    let m = MONTH_ABBREVS.iter().find(|m| m.1.eq_ignore_ascii_case(name))?;
+                    return Some(words(&[m.0]));
+                }
+                _ => return None,
+            }
+        };
+        return date_fmt(&parts, fmt);
+    }
+    if nsw.starts_with("time") {
+        if name.len() == 4 && digits(name) {
+            let mm = if &name[2..] == "00" { words(&["hundred"]) } else { exp_id(&name[2..]) };
+            return Some(cat(exp_id(&name[..2]), mm));
+        }
+        let parts = split_any(name, ":.");
+        let mut r = exp_number(parts[0]);
+        for k in 1..parts.len() {
+            // trailing "00"s say nothing, but a "00" before anything else is read
+            if parts[k..].iter().all(|p| *p == "00") {
+                break;
+            }
+            r.extend(exp_id(parts[k]));
+        }
+        return Some(r);
+    }
+    None
+}
+
+/// fn_0418b8 with its format: the parts named by `y`, `m` and `d`, month
+/// first, then day, then year, with a break after the day when all three
+/// are there.
+fn date_fmt(parts: &[&str], fmt: &str) -> Option<Vec<Word>> {
+    if parts.len() != fmt.len() {
+        return None;
+    }
+    let (mut month, mut day, mut year) = (Vec::new(), Vec::new(), Vec::new());
+    for (c, s) in fmt.bytes().zip(parts) {
+        match c {
+            b'y' => year = if *s == "00" { words(&["two", "thousand"]) } else { exp_id(s) },
+            b'm' => {
+                let v = atoi(s);
+                let full = if (1..=12).contains(&v) {
+                    MONTH_ABBREVS[v as usize - 1].0
+                } else {
+                    MONTH_ABBREVS.iter().find(|m| m.1.eq_ignore_ascii_case(s))?.0
+                };
+                month = words(&[full]);
+            }
+            b'd' => {
+                if !(1..=31).contains(&atoi(s)) {
+                    return None;
+                }
+                day = exp_ordinal(s);
+            }
+            _ => {}
+        }
+    }
+    let mut r = month;
+    if !day.is_empty() {
+        let dated = !r.is_empty();
+        r = cat(r, day);
+        if dated && !year.is_empty() {
+            r = add_break(r);
+        }
+    }
+    Some(cat(r, year))
+}
+
+/// sub_040d40: each N, S, E or W its own word, anything else skipped.
+fn compass(s: &str) -> Vec<Word> {
+    s.chars().filter_map(|c| match c {
+        'E' => Some(Word::new("east")),
+        'N' => Some(Word::new("north")),
+        'S' => Some(Word::new("south")),
+        'W' => Some(Word::new("west")),
+        _ => None,
+    }).collect()
+}
+
+/// sub_04233c, the say-as address reader. Directions, "St" after one, a
+/// Canadian "CA", states, street words, then house numbers and ZIP codes.
+fn say_address(cx: &Cx, i: usize, name: &str) -> Option<Vec<Word>> {
+    let dir = |s: &str| crate::rx!("^[ENSW][ENSW]?$").is_match(s);
+    let zip = |s: &str| crate::rx!(r"^[0-9]{5}(-[0-9]{4})?$").is_match(s);
+    if cx.ws_at(i, 1).contains('\n') {
+        cx.set_punc(i, "\n");
+    }
+    let rest = || -> Option<Vec<Word>> { address_rest(cx, i, name) };
+    if dir(name) {
+        if name == "NE" && ((cx.has(i, 1) && zip(&cx.tname(i + 1))) || cx.punc_at(i, -1) == ",") {
+            return rest();
+        }
+        if name.len() != 1 {
+            return Some(compass(name));
+        }
+        if cx.punc(i) != "." && cx.has(i, 1)
+            && crate::rx!("^[Ss][Tt]([Rr][Ee][Ee][Tt])?$").is_match(&cx.tname(i + 1))
+        {
+            feat(i + 1, |f| f.street = true);
+            return rest();
+        }
+        if cx.punc_at(i, -1).is_empty() && cx.has(i, -1)
+            && crate::rx!("^[Aa][Vv]([Ee][Nn][Uu][Ee]|[Ee])?$").is_match(&cx.tname(i - 1))
+        {
+            return rest();
+        }
+        return Some(compass(name));
+    }
+    let b = name.as_bytes();
+    if crate::rx!(r"^[A-Za-z](\.[A-Za-z])+\.?$").is_match(name) && b.len() == 3
+        && b"NSEW".contains(&b[0]) && b"NSEW".contains(&b[2])
+    {
+        return Some(compass(&format!("{}{}", b[0] as char, b[2] as char)));
+    }
+    rest()
+}
+
+const CANADIAN_CITIES: [&str; 8] = [
+    "ottawa", "toronto", "montreal", "vancouver", "quebec", "calgary", "edmonton", "winnipeg",
+];
+
+fn address_rest(cx: &Cx, i: usize, name: &str) -> Option<Vec<Word>> {
+    let dir = |s: &str| crate::rx!("^[ENSW][ENSW]?$").is_match(s);
+    let zip = |s: &str| crate::rx!(r"^[0-9]{5}(-[0-9]{4})?$").is_match(s);
+    if name.to_ascii_lowercase() == "st" {
+        let street = feat(i, |f| f.street).unwrap_or(false)
+            || (cx.has(i, 1) && dir(&cx.tname(i + 1)));
+        return street.then(|| words(&["street"]));
+    }
+    if name == "CA" {
+        let p = cx.name_at(i, -1).to_ascii_lowercase();
+        if crate::rx!("^[A-Z][0-9][A-Z]$").is_match(&cx.name_at(i, 1))
+            || CANADIAN_CITIES.contains(&p.as_str())
+        {
+            return Some(words(&["canada"]));
+        }
+    }
+    if let Some(r) = state_name(cx, i, name) {
+        return Some(r);
+    }
+    if let Some(r) = address(cx, i, name) {
+        return Some(r);
+    }
+    if !digits(name) {
+        let dash = name.find('-').filter(|_| zip(name))?;
+        return Some(cat(exp_digits(&name[..dash]), cons("dash", exp_digits(&name[dash + 1..]))));
+    }
+    let len = name.len();
+    if crate::rx!("^[1-9]?[1-9]00$").is_match(name) {
+        return Some(cat(exp_number(&name[..len - 2]), words(&["hundred"])));
+    }
+    if crate::rx!("^[1-9]?[1-9]000$").is_match(name) {
+        return Some(exp_number(name));
+    }
+    match len {
+        4 if name.as_bytes()[1] == b'0' || zip(&cx.name_at(i, -1)) => Some(exp_digits(name)),
+        4 => Some(exp_id(name)),
+        n if n > 3 => Some(exp_digits(name)),
+        3 => {
+            let tail = &name[1..];
+            let t = if tail.starts_with('0') { exp_digits(tail) } else { exp_number(tail) };
+            Some(cat(exp_digits(&name[..1]), t))
+        }
+        _ => None,
+    }
+}
+
+/// fn_041da0. A trailing `'` or `"` is feet or inches, and is taken off the
+/// token's punctuation even when the answer is nothing.
+fn say_measure(cx: &Cx, i: usize, name: &str) -> Option<Vec<Word>> {
+    let n = atoi(name);
+    let b = name.as_bytes();
+    let len = b.len();
+    let unit = |one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
+    let with = |num: &str, w: String| {
+        if num.is_empty() { words(&[&w]) } else { cat(exp_number(num), words(&[&w])) }
+    };
+    let mark = cx.punc(i);
+    if mark == "'" {
+        cx.set_punc(i, "");
+        return Some(with(name, unit("foot", "feet")));
+    }
+    if mark == "\"" {
+        cx.set_punc(i, "");
+        if name.contains('\'') {
+            return None;
+        }
+        return Some(with(name, unit("inch", "inches")));
+    }
+    match b.last() {
+        Some(b'm') => {
+            let prefix = if len > 1 { "nmck".find(b[len - 2] as char) } else { None };
+            let (w, num) = match prefix {
+                Some(k) => (["nano", "milli", "centi", "kilo"][k].to_string()
+                                + &unit("meter", "meters"), name.get(..len - 2)?),
+                None => (unit("meter", "meters"), &name[..len - 1]),
+            };
+            Some(with(num, w))
+        }
+        Some(b'l' | b'L') => {
+            if len > 1 && b[len - 2] == b'm' {
+                Some(with(name.get(..len - 2)?, unit("milliliter", "milliliters")))
+            } else {
+                Some(with(&name[..len - 1], unit("liter", "liters")))
+            }
+        }
+        _ if len <= 2 => None,
+        _ => {
+            let w = match name.get(len - 2..)? {
+                "mi" => unit("mile", "miles"),
+                "in" => unit("inch", "inches"),
+                "ft" => unit("foot", "feet"),
+                _ => return None,
+            };
+            Some(with(&name[..len - 2], w))
+        }
+    }
 }

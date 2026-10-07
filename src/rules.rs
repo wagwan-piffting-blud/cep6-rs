@@ -269,15 +269,18 @@ pub struct Phone {
     /// six-phone word and every structural feature downstream follows it.
     pub word_id: u32,
     pub syl_end: Option<bool>,
+    /// An explicit duration in seconds, the segment `duration` feature. Only
+    /// the silence `<break>` inserts carries one; its unit is stretched to fit.
+    pub dur: Option<f32>,
 }
 
 impl Phone {
     pub fn new(phone: &str, stress: u8) -> Phone {
-        Phone { phone: phone.to_string(), stress, word: None, word_id: 0, syl_end: None }
+        Phone { phone: phone.to_string(), stress, word: None, word_id: 0, syl_end: None, dur: None }
     }
 
     pub fn pause() -> Phone {
-        Phone { phone: "pau".into(), stress: 0, word: None, word_id: 0, syl_end: Some(true) }
+        Phone { phone: "pau".into(), stress: 0, word: None, word_id: 0, syl_end: Some(true), dur: None }
     }
 
     pub fn is_pause(&self) -> bool {
@@ -398,18 +401,15 @@ impl NameRules {
         (0..n)
             .map(|i| {
                 let p = &phones[i];
-                // Context stops at the word edge. Consonant-vowel fusion in
-                // unit_name is unconditional -- next_in_syllable only gates the
-                // vowel case -- so the only way to stop /l/ ending "civil" from
-                // fusing into "authority" as `lao` is to withhold the follower.
-                // The engine emits plain `l`, `d`, `dh` at word ends, which is
-                // the same thing seen from the outside.
-                let next = phones.get(i + 1).filter(|q| {
-                    match (&phones[i].word, &q.word) {
-                        (Some(_), Some(_)) => phones[i].word_id == q.word_id,
-                        _ => true,
-                    }
-                }).map(|q| q.phone.as_str());
+                // The follower a blist head fuses with is
+                // `R:SylStructure.n.name` (ceplang_en.dll @0x4dbb1): the next
+                // phone only when it is in the same syllable, for consonant
+                // heads as much as vowels. So /l/ ending "civil" never fuses
+                // with "authority", and neither does a coda consonant with the
+                // vowel after it, which only a <phoneme> can produce.
+                let next = phones.get(i + 1)
+                    .filter(|_| !plan[i].syl_final)
+                    .map(|q| q.phone.as_str());
                 // A sentence boundary is TWO pause units in the engine's output,
                 // `pauend` closing one utterance and `paustart` opening the next,
                 // so a pause's role has to come from its neighbours rather than

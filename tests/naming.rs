@@ -241,6 +241,7 @@ fn worded(spec: &[(&str, u8, &str)]) -> Vec<Phone> {
                 word: Some(w.to_string()),
                 word_id: id,
                 syl_end: None,
+                dur: None,
             }
         })
         .collect()

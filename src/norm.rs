@@ -127,7 +127,140 @@ pub fn normalize_with<F: Fn(&str) -> bool>(
     style: DigitStyle,
     known: F,
 ) -> Vec<Token> {
-    normalize_engine(text, &known, style == DigitStyle::Digits)
+    let toks = crate::token::tokenize(text);
+    normalize_engine(toks, &known, style == DigitStyle::Digits, |_| {})
+}
+
+/// What markup left on one `Token::Word`.
+#[derive(Debug, Clone, Default)]
+pub struct WordMarks {
+    /// The controls of the first character of the token it came from.
+    pub ctl: crate::markup::Ctl,
+    /// Seconds of silence after it. swift.dll puts a `<break>` on the last
+    /// token read before it (@0x3a220), and `default_pause_insertion` puts the
+    /// pause after that token's last word.
+    pub break_after: Option<f32>,
+    /// Utterance breaks after it: what opens the utterances that follow.
+    pub opens: Option<Opens>,
+    /// A `<phoneme>` word's items, which take the lexicon's place.
+    pub phones: Option<Vec<String>>,
+}
+
+/// What follows an utterance break (@0x38e70): the utterance open at the time
+/// is synthesised even when nothing has been read into it, and an empty one
+/// renders as a lone pause.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Opens {
+    /// The duration of each empty utterance's lone pause, in order.
+    pub empties: Vec<Option<f32>>,
+    /// The duration of the next utterance's opening pause.
+    pub first: Option<f32>,
+}
+
+/// The `duration` default_pause_insertion gives a paragraph's opening pause:
+/// the float cst_val at swift.dll 0x760b0.
+pub const PARAGRAPH_PAUSE: f32 = 0.5;
+
+/// The same, also returning what the markup left on each `Token::Word`, and
+/// what opens the text when breaks come before any token. `Opens::first` is
+/// then the first utterance's opening pause.
+pub fn normalize_marked<F: Fn(&str) -> bool>(
+    m: &crate::markup::Marked,
+    style: DigitStyle,
+    known: F,
+) -> (Vec<Token>, Vec<WordMarks>, Opens) {
+    use crate::markup::Break;
+    let (mut toks, mut starts) = crate::token::tokenize_split(&m.text, &m.splits);
+    for (t, &s) in toks.iter_mut().zip(&starts) {
+        t.nsw = m.nsw_at(s).map(str::to_string);
+    }
+    // @0x3ae60 appends a <phoneme> to the Token relation as it is read: named
+    // with its `ph`, no whitespace, no punctuation
+    for (at, ph, words) in &m.phonemes {
+        let k = starts.partition_point(|&s| s < *at);
+        let t = crate::token::Tok { name: ph.clone(), phones: Some(words.clone()),
+                                    ..Default::default() };
+        toks.insert(k, t);
+        starts.insert(k, *at);
+    }
+
+    // Walk the breaks in order, grouped by the last token read before each.
+    // Until an utterance break the token takes them; after one the new
+    // utterance is empty, a timed break goes onto an empty token in it
+    // (becoming its opening pause), and a further utterance break synthesises
+    // it as a lone pause. A paragraph's 0.5 s is set last, so it wins.
+    struct Group {
+        tok: Option<usize>,
+        pause: Option<f32>,
+        opens: Option<Opens>,
+    }
+    let mut groups: Vec<Group> = Vec::new();
+    // Some((paragraph, pause)) while the open utterance is still empty
+    let mut empty: Option<(bool, Option<f32>)> = None;
+    for &(at, b) in &m.breaks {
+        let tok = starts.partition_point(|&s| s < at).checked_sub(1);
+        if groups.last().map_or(true, |g| g.tok != tok) {
+            // before any token the first utterance is already open and empty
+            empty = if tok.is_none() { Some((false, None)) } else { None };
+            let opens = if tok.is_none() { Some(Opens::default()) } else { None };
+            groups.push(Group { tok, pause: None, opens });
+        }
+        let g = groups.last_mut().unwrap();
+        match (b, &mut empty, tok) {
+            (Break::Pause(s), None, Some(t)) => {
+                g.pause = Some(s);
+                toks[t].brk = true;
+            }
+            (Break::Phrase, None, Some(t)) => toks[t].brk = true,
+            (Break::Pause(s), Some((_, pause)), _) => *pause = Some(s),
+            (Break::Utterance { paragraph }, e, t) => {
+                let o = g.opens.get_or_insert_with(Opens::default);
+                match (e.take(), t) {
+                    (Some((para, pause)), _) => {
+                        o.empties.push(if para { Some(PARAGRAPH_PAUSE) } else { pause });
+                    }
+                    (None, Some(t)) => toks[t].utt_end = true,
+                    (None, None) => {}
+                }
+                *e = Some((paragraph, None));
+            }
+            _ => {}
+        }
+        if let (Some(o), Some((para, pause))) = (&mut g.opens, &empty) {
+            o.first = if *para { Some(PARAGRAPH_PAUSE) } else { *pause };
+        }
+    }
+    let lead = groups.first()
+        .filter(|g| g.tok.is_none())
+        .and_then(|g| g.opens.clone())
+        .unwrap_or_default();
+
+    let phones: Vec<Option<Vec<Vec<String>>>> = toks.iter().map(|t| t.phones.clone()).collect();
+    let mut marks: Vec<WordMarks> = Vec::new();
+    let mut word_tok: Vec<usize> = Vec::new();
+    let out = normalize_engine(toks, &known, style == DigitStyle::Digits, |tok| {
+        // which of a <phoneme>'s `|` words this is
+        let nth = word_tok.iter().rev().take_while(|&&t| t == tok).count();
+        marks.push(WordMarks {
+            ctl: m.ctl_at(starts[tok]),
+            phones: phones[tok].as_ref().and_then(|w| w.get(nth).cloned()),
+            ..Default::default()
+        });
+        word_tok.push(tok);
+    });
+    for g in groups.into_iter().filter(|g| g.tok.is_some()) {
+        let t = g.tok.unwrap();
+        if let Some(w) = word_tok.iter().rposition(|&w| w <= t) {
+            // a second break on the same token replaces the first, as item_set does
+            if g.pause.is_some() {
+                marks[w].break_after = g.pause;
+            }
+            if g.opens.is_some() {
+                marks[w].opens = g.opens;
+            }
+        }
+    }
+    (out, marks, lead)
 }
 
 /// The engine's own path: flite's tokenizer and `us_tokentowords`, with
@@ -135,13 +268,22 @@ pub fn normalize_with<F: Fn(&str) -> bool>(
 ///
 /// A hard break is a sentence end, which the engine renders as two pause units
 /// because it starts a new utterance; a phrase break inside one is a single
-/// pause.
-fn normalize_engine<F: Fn(&str) -> bool>(text: &str, known: &F, digits: bool) -> Vec<Token> {
+/// pause. `on_word` hears each `Token::Word` as it is pushed, with the index
+/// over the whole text of the token it came from.
+fn normalize_engine<F: Fn(&str) -> bool>(
+    toks: Vec<crate::token::Tok>,
+    known: &F,
+    digits: bool,
+    mut on_word: impl FnMut(usize),
+) -> Vec<Token> {
     let mut out: Vec<Token> = Vec::new();
-    let utts = crate::token::utterances(crate::token::tokenize(text));
+    let utts = crate::token::utterances(toks);
     let n = utts.len();
+    let mut base = 0usize;
     for (u, toks) in utts.iter().enumerate() {
+        let from = out.len();
         for w in crate::token::utterance_words(toks, &|s: &str| known(s), digits) {
+            on_word(base + w.tok);
             // "prince-edward" reaches the lexicon whole, as the engine sends it
             out.push(Token::Word(w.text.clone()));
             if w.brk {
@@ -150,8 +292,11 @@ fn normalize_engine<F: Fn(&str) -> bool>(text: &str, known: &F, digits: bool) ->
         }
         // the mark that ended the utterance is on the break we are about to
         // drop; the tagger wants it even though the phone stream does not
+        // Only this utterance's own: one with no words (`cat .` puts the `.` in
+        // an utterance of its own) must not eat the break that ended the last.
         let mut mark = String::new();
-        while let Some(Token::Break(_, m)) = out.last() {
+        while out.len() > from {
+            let Some(Token::Break(_, m)) = out.last() else { break };
             if !m.is_empty() {
                 mark = m.clone();
             }
@@ -163,6 +308,7 @@ fn normalize_engine<F: Fn(&str) -> bool>(text: &str, known: &F, digits: bool) ->
         if u + 1 < n {
             out.push(Token::Break(true, mark));
         }
+        base += toks.len();
     }
     out
 }

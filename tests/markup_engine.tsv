@@ -1,0 +1,151 @@
+# The engine's renders (William, 16 kHz) of _fe/markup_cases.txt, spoken through
+# SAPI by _fe/markup_check.ps1, and of _fe/ssml_cases.txt, swapped into the
+# engine by _fe/ssml_check.py. Hashed by _fe/markup_hashes.py. Do not edit.
+vol_25	<volume level="25">The quick brown fox jumps over the lazy dog.</volume>	53736	d856debdb9924d19
+vol_33	<volume level="33">The quick brown fox jumps over the lazy dog.</volume>	53736	76eafcbea4447b3a
+vol_mid	The quick brown <volume level="50">fox jumps</volume> over the lazy dog.	53736	1fa4b7d60a6c5680
+vol_nest	The <volume level="20">quick <volume level="80">brown fox</volume> jumps</volume> over the lazy dog.	53736	ba3ec615630d6335
+brk_500	The quick brown fox <silence msec="500"/> jumps over the lazy dog.	64684	dccae530cffa21db
+brk_comma	The quick brown fox, <silence msec="500"/> jumps over the lazy dog.	64684	dccae530cffa21db
+brk_end	The quick brown fox. <silence msec="700"/> Jumps over the lazy dog.	69878	26f0b53f9f59a744
+brk_last	The quick brown fox jumps over the lazy dog. <silence msec="400"/>	56232	6c87c0eab3049cf2
+brk_start	<silence msec="300"/> The quick brown fox jumps over the lazy dog.	56768	c194df3abf651332
+brk_50	The quick brown fox <silence msec="50"/> jumps over the lazy dog.	57568	555099c8dd83cf7b
+brk_1500	The quick brown fox <silence msec="1500"/> jumps over the lazy dog.	80748	5324d5327f9e87db
+brk_two	The quick <silence msec="250"/> brown fox <silence msec="800"/> jumps over the lazy dog.	76654	200eb6502f00fc34
+brk_same	The quick brown fox <silence msec="250"/> <silence msec="600"/> jumps over the lazy dog.	66292	36b17a53d3d7c09b
+brk_mid_word	The quick brown fo<silence msec="500"/>x jumps over the lazy dog.	65860	161044d2aedff1e0
+brk_vol	The quick <volume level="40">brown fox <silence msec="500"/> jumps</volume> over the lazy dog.	64684	6d6b1659caf70960
+rate_p5	<rate absspeed="5">The quick brown fox jumps over the lazy dog.</rate>	30006	23c34ad8fc984f27
+rate_m5	<rate absspeed="-5">The quick brown fox jumps over the lazy dog.</rate>	73146	2b1fbb2d370ecbaa
+rate_p10	<rate absspeed="10">The quick brown fox jumps over the lazy dog.</rate>	22590	0efe1d877fa1fbea
+rate_m10	<rate absspeed="-10">The quick brown fox jumps over the lazy dog.</rate>	129446	97ea34041f37fbcb
+rate_p1	<rate absspeed="1">The quick brown fox jumps over the lazy dog.</rate>	44348	af2dac4a2a7e51df
+rate_mid	The quick brown <rate absspeed="-7">fox jumps</rate> over the lazy dog.	62128	426d0314426f1b46
+rate_rel	<rate absspeed="3">The quick <rate speed="4">brown fox</rate> jumps over the lazy dog.</rate>	32978	04ef14fa4af5adb2
+rate_brk	<rate absspeed="6">The quick brown fox <silence msec="500"/> jumps over the lazy dog.</rate>	37700	c53123c62dbf33a6
+pitch_p5	<pitch absmiddle="5">The quick brown fox jumps over the lazy dog.</pitch>	50588	2241514109c28844
+pitch_m5	<pitch absmiddle="-5">The quick brown fox jumps over the lazy dog.</pitch>	49970	3386303462ae8870
+pitch_p10	<pitch absmiddle="10">The quick brown fox jumps over the lazy dog.</pitch>	52176	a6c956c27bf4b829
+pitch_m10	<pitch absmiddle="-10">The quick brown fox jumps over the lazy dog.</pitch>	48525	d4bea1d69fae7b39
+pitch_mid	The quick brown <pitch absmiddle="7">fox jumps</pitch> over the lazy dog.	53316	13570bd4227f94d1
+both	<rate absspeed="-3"><pitch absmiddle="4">The quick brown fox jumps over the lazy dog.</pitch></rate>	63608	ac4ae8884991e22f
+all	<rate absspeed="2"><pitch absmiddle="-3"><volume level="60">The quick brown fox <silence msec="300"/> jumps over the lazy dog.</volume></pitch></rate>	46653	e4e394995f74ade1
+pron_empty	Say <pron sym="p ow 1 t ey 1 t ow"/> now.	28448	09f8f352e81e492d
+pron_wrap	Say <pron sym="p ow 1 t ey 1 t ow">tomato</pron> now.	28448	09f8f352e81e492d
+pron_first	<pron sym="h eh 1 l ow"/> world, how are you?	36840	40132564fe1df05f
+pron_last	The quick brown fox jumps over the lazy <pron sym="k ae 1 t"/>.	54698	d8179bb4bdb2e7c3
+pron_syl	Say <pron sym="t ah - m ey 1 - t ow"/> now.	26674	a41300571c7e7f19
+pron_two	A <pron sym="r eh 1 d"/> <pron sym="k aa 1 r"/> went by.	26410	f3fcaa745d13464b
+pron_iy	Please <pron sym="r iy 1 d"/> the <pron sym="y uw 1 n ah t"/> book.	31614	98b39d10c34c59b5
+pron_vol	The <volume level="40"><pron sym="k w ih 1 k"/></volume> brown fox.	29474	350ee4fedd25a09a
+emph_sapi	The quick <emph>brown fox</emph> jumps over the lazy dog.	57592	179446fe7e9af342
+emph_sapi_vol	<volume level="50">The quick <emph>brown fox</emph> jumps</volume> over the lazy dog.	57592	01cb10ed0288962c
+emph_sapi_rate	<rate absspeed="5">The quick <emph>brown fox</emph> jumps</rate> over the lazy dog.	40788	5c856f8d34de3535
+spell_sapi	I spell <spell>cat</spell> for you.	34600	e95bed9617ea22c9
+spell_sapi_ctl	<volume level="50"><rate absspeed="5">I spell <spell>cat</spell> now <emph>and <spell>dog</spell></emph>.</rate></volume>	39076	afbcfec7d20c0ce3
+bm_sapi	Give me a <bookmark mark="m1"/> test now.	26260	48e425d83c57e75c
+str_medium	The quick brown fox <break/> jumps over the lazy dog.	62806	f0f616e9a47df544
+str_strong	The quick brown fox <break strength="strong"/> jumps over the lazy dog.	69038	7c9ba4c7dc8b44c4
+str_xstrong	The quick brown fox <break strength="x-strong"/> jumps over the lazy dog.	69038	7c9ba4c7dc8b44c4
+str_weak	The quick brown fox <break strength="weak"/> jumps over the lazy dog.	59684	7d1ad7f1bb85f61b
+str_xweak_comma	The quick brown fox, <break strength="x-weak"/> jumps over the lazy dog.	59684	7d1ad7f1bb85f61b
+str_none_time	The quick brown fox <break strength="none" time="500ms"/> jumps over the lazy dog.	53736	a2a720c82117e0f2
+str_strong_time	The quick brown fox <break strength="x-strong" time="300ms"/> jumps over the lazy dog.	61418	67a0d7fa5d06660b
+str_bare_number	The quick brown fox <break time="500"/> jumps over the lazy dog.	62806	f0f616e9a47df544
+str_zero	The quick brown fox <break time="0ms"/> jumps over the lazy dog.	62806	f0f616e9a47df544
+str_seconds	The quick brown fox <break time="0.75s"/> jumps over the lazy dog.	68636	5341c046ab68a55b
+str_start_strong	<break strength="strong"/>The quick brown fox jumps over the lazy dog.	61652	c05b3ba4b906c2d2
+str_after_stop	The quick brown fox. <break strength="strong"/> It jumps over the lazy dog.	71694	42c6f7bcefced850
+str_size	The quick brown fox <break size="large"/> jumps over the lazy dog.	69038	7c9ba4c7dc8b44c4
+pro_xslow	<prosody rate="x-slow">The quick brown fox jumps over the lazy dog.</prosody>	102044	c101f80091d9e0e0
+pro_pct	<prosody rate="+50%">The quick brown fox jumps over the lazy dog.</prosody>	36060	128b35b82739f612
+pro_rel	<prosody rate="-0.3">The quick brown fox jumps over the lazy dog.</prosody>	71672	f41252ae92e97a05
+pro_high	<prosody pitch="high">The quick brown fox jumps over the lazy dog.</prosody>	53736	6d0fc05b9194fa5e
+pro_pitch_pct	<prosody pitch="+10%">The quick brown fox jumps over the lazy dog.</prosody>	51068	dc2972cf9c94c9e4
+pro_nest	<prosody pitch="+4st">The quick <prosody pitch="+4st">brown fox</prosody> jumps over the lazy dog.</prosody>	50806	627d936f70582b50
+pro_vol	<prosody volume="30">The quick brown fox jumps over the lazy dog.</prosody>	53736	dc0848aa6b72357d
+str_start_medium	<break/>The quick brown fox jumps over the lazy dog.	55420	dacf28e717873f92
+str_end_strong	The quick brown fox jumps over the lazy dog. <break strength="strong"/>	61652	56b5bfa38c30adb2
+str_double	The quick brown fox <break/><break strength="strong"/> jumps over the lazy dog.	70722	ec7b72e3b922bb84
+str_start_time	<break time="300ms"/><break strength="strong"/>The quick brown fox jumps over the lazy dog.	64684	0ca243356daaac12
+str_end_medium	The quick brown fox jumps over the lazy dog. <break/>	55420	b83c5dbce9ce3432
+str_mid_time_after	The quick brown fox <break/><break time="300ms"/> jumps over the lazy dog.	65838	5bf1bd454bb61cc4
+ph_plain	Say <phoneme ph="p ow1 t ey1 t ow"/> now.	16916	e4d64d4745e715cc
+ph_text	Say <phoneme ph="p ow1 t ey1 t ow">tomato</phoneme> now.	28448	09f8f352e81e492d
+ph_words	Say <phoneme ph="h eh1 l ow | w er1 l d"></phoneme> now.	30140	5e4e14521ae2ed26
+ph_dots	Say <phoneme ph="t ah . m ey1 . t ow"></phoneme> now.	26674	a41300571c7e7f19
+ph_lone	Say <phoneme ph="t ah 1 m ey t ow"></phoneme> now.	27804	27beae6a93e4a531
+ph_bad	Say <phoneme ph="t zz m ey1 t ow">tomato</phoneme> now.	16916	e4d64d4745e715cc
+ph_alpha	Say <phoneme alphabet="cepstral_en" ph="p ow1 t ey1 t ow"></phoneme> now.	28448	09f8f352e81e492d
+dot_after_ph	The quick brown fox jumps over the lazy <phoneme ph="k ae1 t"></phoneme>.	54698	d8179bb4bdb2e7c3
+dot_none	The quick brown fox jumps over the lazy <phoneme ph="k ae1 t"></phoneme>	53014	122f16315059cfe3
+dot_spaced	The quick brown fox jumps over the lazy cat .	54698	d8179bb4bdb2e7c3
+dot_tagged	The quick brown fox jumps over the lazy cat<prosody volume="100">.</prosody>	54698	d8179bb4bdb2e7c3
+ph_lone_a	Say <phoneme ph="t ah1 m . ey . t ow"></phoneme> now.	27804	27beae6a93e4a531
+ph_lone_b	Say <phoneme ph="t ah1 . m ey . t ow"></phoneme> now.	25834	7c3037d386bc58b4
+ph_lone_c	Say <phoneme ph="t ah1 m ey t ow"></phoneme> now.	25834	7c3037d386bc58b4
+ph_sampa_ns	Say <phoneme alphabet="sampa" ph="t@meItoU"></phoneme> now.	26826	8de2e230dbb5c51e
+emph_mod	The quick <emphasis>brown fox</emphasis> jumps over the lazy dog.	57592	eb0939f3402500b6
+emph_strong	The quick <emphasis level="strong">brown fox</emphasis> jumps over the lazy dog.	66414	650deb5275cf7b58
+emph_reduced	The quick <emphasis level="reduced">brown fox</emphasis> jumps over the lazy dog.	53736	a2a720c82117e0f2
+emph_none	The quick <emphasis level="none">brown fox</emphasis> jumps over the lazy dog.	53736	a2a720c82117e0f2
+emph_in_vol	The quick <prosody volume="50">brown <emphasis>fox jumps</emphasis> over</prosody> the lazy dog.	57328	b38a485ea939ca87
+emph_in_rate	<prosody rate="slow">The quick <emphasis>brown fox</emphasis> jumps</prosody> over the lazy dog.	64262	56c2aa46e33aece8
+vkw_loud	The quick <prosody volume="loud">brown fox</prosody> jumps over the lazy dog.	53736	f6e82d59046d24fc
+vkw_xloud	The quick <prosody volume="x-loud">brown fox</prosody> jumps over the lazy dog.	53736	d1dc44b116d27bbd
+vkw_soft	The quick <prosody volume="soft">brown fox</prosody> jumps over the lazy dog.	53736	ccbcc50ddd421828
+vkw_xsoft	The quick <prosody volume="x-soft">brown fox</prosody> jumps over the lazy dog.	53736	2ca34f24c46f2649
+vkw_silent	The quick <prosody volume="silent">brown fox</prosody> jumps over the lazy dog.	53736	26f894d84329579f
+vkw_bogus	The quick <prosody volume="40"><prosody volume="50%">brown fox</prosody> jumps</prosody> over the lazy dog.	53736	f6051688d3dd9e79
+vrel_pct	The quick <prosody volume="+20%">brown fox</prosody> jumps over the lazy dog.	53736	3344f1354113e5b6
+vrel_minus	The quick <prosody volume="-30%">brown fox</prosody> jumps over the lazy dog.	53736	c9c11ca4126937d2
+vrel_abs	The quick <prosody volume="+30">brown fox</prosody> jumps over the lazy dog.	53736	8be05fad260a8336
+vrel_nest	The <prosody volume="50">quick <prosody volume="+50%">brown fox</prosody> jumps</prosody> over the lazy dog.	53736	e61410e87fca2f36
+vrel_neg	The quick <prosody volume="-150%">brown fox</prosody> jumps over the lazy dog.	53736	26f894d84329579f
+rate_bogus	<prosody rate="slow">The quick <prosody rate="bogus">brown fox</prosody> jumps</prosody> over the lazy dog.	66630	a2bc2b423a7d6f71
+sa_spell	I spell <say-as type="spell-out">cat</say-as> for you.	34600	e95bed9617ea22c9
+sa_acronym	The <say-as type="acronym">NASA</say-as> launch was late.	37800	25a1099677e220e6
+sa_chars	I spell <say-as interpret-as="characters">cat</say-as> for you.	27996	fbbd3800c600a1fe
+sa_letters_mix	Try <say-as type="spell-out">Hi, B2! x-y</say-as> today.	67538	dcbe2c227af28434
+sl_comma	Try <say-as type="spell-out">Hi,</say-as> today.	33586	6dfc7fde60192704
+sl_bang	Try <say-as type="spell-out">B2!</say-as> today.	37698	aa804bd826edddcf
+sl_dash	Try <say-as type="spell-out">x-y</say-as> today.	36382	1414249e0ccdc6a7
+sa_literal	The <say-as type="literal">a+b=c.</say-as> case.	54738	88cc0c50e941e043
+sa_literal_ws	The <say-as type="literal">ab cd</say-as> case.	34010	e7d091002db77090
+sa_ordinal	The <say-as interpret-as="ordinal">21</say-as> time.	26072	f529cfd514cf295f
+sa_cardinal	In <say-as interpret-as="cardinal">1999</say-as> we went.	53646	f70c3b9c7d7d9e95
+sa_digits	Call <say-as interpret-as="digits">1999</say-as> now.	40662	2530f22160233b5c
+sa_roman	Henry the <say-as interpret-as="ordinal">XIV</say-as> is here.	33070	67617e94e8705781
+sa_decimal	It is <say-as type="number:decimal">12.5</say-as> long.	35706	c08a535c8b0b0668
+sa_number	It is <say-as type="number">1999</say-as> long.	50492	1c56b9c53fdbdef1
+sa_date	On <say-as type="date">12/25/2004</say-as> we met.	61200	3f3b453fc01b5fd6
+sa_date_dmy	On <say-as interpret-as="date" format="dmy">25.12.2004</say-as> we met.	61200	3f3b453fc01b5fd6
+sa_date_ymd	On <say-as type="date">2004-12-25</say-as> we met.	61200	3f3b453fc01b5fd6
+sa_date_md	On <say-as type="date">3/7</say-as> we met.	33076	a57c768901afc534
+sa_date_mon	In <say-as type="date">Jan</say-as> we met.	28916	be9e38e8810f0842
+sa_time_4	At <say-as type="time">1400</say-as> we met.	36392	199a99cfa40253e1
+sa_time_hm	At <say-as type="time">3:45</say-as> we met.	35032	1f116bdc086978d7
+sa_time_00	At <say-as type="time">3:00:00</say-as> we met.	23434	3739d225b8d1c001
+sa_time_mid00	At <say-as type="time">3:00:15</say-as> we met.	44998	705b831f7d12e7f2
+sa_meas_km	It ran <say-as type="measure">5km</say-as> today.	40796	588c4a82613a8210
+sa_meas_1m	It ran <say-as type="measure">1m</say-as> today.	32456	896a2c855c809f6f
+sa_meas_ft	It is <say-as type="measure">6'</say-as> tall.	27532	53e73df639388ceb
+sa_meas_in	It is <say-as type="measure">12"</say-as> wide.	32152	b8320ad07f630416
+sa_meas_ml	Add <say-as type="measure">5ml</say-as> today.	36324	0e11d3c17e9ef9a9
+sa_meas_mi	It ran <say-as type="measure">3mi</say-as> today.	33564	fda761f97efde445
+sa_words	The <say-as type="words">NASA</say-as> launch was late.	31402	fcd9a5d0fcbd2123
+sa_nested	Try <say-as type="spell-out">ab <say-as interpret-as="cardinal">12</say-as> cd</say-as> today.	37996	6e18e73b639c251e
+ad_street	Go to <say-as interpret-as="address">1234 N Main St</say-as> today.	50714	8acd2a47533170bc
+ad_st_first	Go to <say-as interpret-as="address">12 St Paul Ave NW</say-as> today.	52108	5c00a0e005af26e4
+ad_dir_two	Go to <say-as interpret-as="address">500 NE Oak Blvd</say-as> today.	50358	4ec809eea38e93d3
+ad_dotted	Go to <say-as interpret-as="address">42 N.E. Elm Rd</say-as> today.	48544	1bdb4894cfcb980b
+ad_ave_dir	Go to <say-as interpret-as="address">7 Main Ave S</say-as> today.	40924	775d1df4c4af9cb9
+ad_state_zip	Mail it to <say-as interpret-as="address">Springfield, IL 62704-1234</say-as> today.	95800	339ff23320d2d3c4
+ad_ne_zip	Mail it to <say-as interpret-as="address">Omaha, NE 68102</say-as> today.	65542	e6937f82f5b72ed1
+ad_canada	Mail it to <say-as interpret-as="address">Toronto CA</say-as> today.	40330	24b3f8d90d13719f
+ad_numbers	Go to <say-as interpret-as="address">300 3000 1050 2017 12345 905 21</say-as> today.	142926	82452c099ec676ef
+ad_amb	Go to <say-as interpret-as="address">5 Ct and 6 Pk</say-as> today.	43386	0f99e1464fa2b99f
+mark_a	Give me a <mark name="m1"/> test now.	26260	48e425d83c57e75c
+mark_mr	Ask Mr. <mark name="m1"/> Smith today.	30998	3c3d2fa03a218af9
+mark_end	The quick brown fox. <mark name="m1"/> Jumps over the lazy dog.	62806	f0f616e9a47df544

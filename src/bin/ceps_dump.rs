@@ -15,6 +15,18 @@
 //!   names / target-cost / dur / f0 / self-test               # model dumps
 //!   bench  [frames]
 //!
+//! text and file also take:
+//!   --markup      read SAPI XML or Swift SSML: volume, breaks (time and
+//!                 strength), rate, pitch, phonemes, emphasis and say-as act
+//!                 (<volume>, <rate>, <pitch>, <silence>, <pron sym>, <emph>,
+//!                 <spell>, <bookmark>, <prosody volume|rate|pitch>, <break>,
+//!                 <phoneme ph alphabet="cepstral_en|sampa">, <emphasis level>,
+//!                 <say-as type|interpret-as format>, <mark>)
+//!   --volume N    the port volume, a percentage (what SpVoice.Volume sets)
+//!   --rate N      SpVoice.Rate, -10..10
+//!   --wpm N       the engine's speech/rate directly (170 is normal)
+//!   --pitch-shift F   speech/pitch/shift, a multiplier
+//!
 //! `file` is the command to use for any long inputs. A shell caps how much text can
 //! go in an argument with text -- Windows around 32 KB, and a long book is megabytes,
 //! and `file` also streams its audio to disk an utterance at a time instead of
@@ -118,6 +130,59 @@ fn load_pack(var: &str, name: &str, embedded: &'static [u8]) -> Option<(Vec<u8>,
     } else {
         Some((embedded.to_vec(), format!("built in, {} KB", embedded.len() / 1024)))
     }
+}
+
+/// `--markup`: read the input as SAPI XML or Swift SSML.
+fn markup_flag(a: &[String], text: &str) -> Option<ceps::Marked> {
+    if !a.iter().any(|x| x == "--markup") {
+        return None;
+    }
+    let m = ceps::markup::parse(text).unwrap_or_else(|e| {
+        eprintln!("markup: {e}");
+        std::process::exit(1);
+    });
+    if !m.ignored.is_empty() {
+        println!("markup: not implemented yet, text kept: {}", m.ignored.join(", "));
+    }
+    Some(m)
+}
+
+/// `--volume N`: the port's audio/volume, a percentage.
+fn volume_flag(a: &[String]) -> u32 {
+    match a.iter().position(|x| x == "--volume") {
+        None => 100,
+        Some(i) => a.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or_else(|| {
+            eprintln!("--volume wants a whole percentage, e.g. --volume 50");
+            std::process::exit(1);
+        }),
+    }
+}
+
+/// `--rate N` (SpVoice.Rate, -10..10), `--wpm N` (the engine's speech/rate)
+/// and `--pitch-shift F` (speech/pitch/shift).
+fn port_flags(a: &[String]) -> ceps::speak::Port {
+    let val = |k: &str| a.iter().position(|x| x == k).map(|i| {
+        a.get(i + 1).cloned().unwrap_or_else(|| {
+            eprintln!("{k} wants a value");
+            std::process::exit(1);
+        })
+    });
+    let bad = |k: &str, v: &str| -> ! {
+        eprintln!("{k} {v}: not a number");
+        std::process::exit(1);
+    };
+    let mut port = ceps::speak::Port::default();
+    if let Some(v) = val("--rate") {
+        let r: i32 = v.parse().unwrap_or_else(|_| bad("--rate", &v));
+        port = port.with_wpm(ceps::speak::Port::sapi_wpm(r));
+    }
+    if let Some(v) = val("--wpm") {
+        port = port.with_wpm(v.parse().unwrap_or_else(|_| bad("--wpm", &v)));
+    }
+    if let Some(v) = val("--pitch-shift") {
+        port.f0_shift = v.parse().unwrap_or_else(|_| bad("--pitch-shift", &v));
+    }
+    port
 }
 
 fn default_path(name: &str) -> String {
@@ -869,8 +934,19 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
 
             warn_if_voice_mismatched(&v);
 
+            let marked = markup_flag(&a, &text);
+            let volume = volume_flag(&a);
             let t0 = std::time::Instant::now();
-            let (seq, _, missing) = ceps::lex::text_to_phones_tagged(&cep, pos.as_ref(), &text, style);
+            let (seq, ctls, missing) = match &marked {
+                Some(m) => {
+                    let (s, c, _, mi) = ceps::lex::text_to_phones_marked(&cep, pos.as_ref(), m, style);
+                    (s, c, mi)
+                }
+                None => {
+                    let (s, _, mi) = ceps::lex::text_to_phones_tagged(&cep, pos.as_ref(), &text, style);
+                    (s, Vec::new(), mi)
+                }
+            };
             if !missing.is_empty() {
                 println!("unpronounceable (skipped): {}", missing.len());
             }
@@ -884,13 +960,15 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
             let t1 = std::time::Instant::now();
             let (mut utts, mut units) = (0usize, 0usize);
             let mut failed = None;
-            ceps::speak::say_phones_each(&v, &seq, |said| {
+            ceps::speak::say_phones_each_ctl(&v, &seq, port_flags(&a), ceps::speak::word_ctl(&ctls), |said| {
                 if failed.is_some() {
                     return;
                 }
                 utts += 1;
                 units += said.units.len();
-                if let Err(e) = w.push(&said.pcm) {
+                let mut pcm = said.pcm;
+                ceps::speak::apply_volume(&mut pcm, volume);
+                if let Err(e) = w.push(&pcm) {
                     failed = Some(e);
                     return;
                 }
@@ -915,7 +993,9 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
         }
         "text" => {
             // text -> lexicon -> naming -> duration -> selection -> audio
-            let text = &a[3];
+            let marked = markup_flag(&a, &a[3]);
+            let volume = volume_flag(&a);
+            let text: &str = marked.as_ref().map_or(&a[3], |m| &m.text);
             let outp = &a[4];
             let style = if a.iter().any(|x| x == "--digits") {
                 ceps::DigitStyle::Digits
@@ -967,6 +1047,7 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
                 load_pack("CEPS_POS", "pos.bin", EMBEDDED_POS)
                     .and_then(|(b, _)| ceps::PosTag::from_bytes(b))
             };
+            let mut ctls = Vec::new();
             let (seq, guessed, missing) = match &cep {
                 Some(c) => {
                     println!("lexicon: Cepstral, {} entries, {} LTS nodes",
@@ -976,9 +1057,20 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
                                             p.feature_count(), p.homographs().len()),
                         None => println!("tagger: none ('0' entries throughout)"),
                     }
-                    ceps::lex::text_to_phones_tagged(c, pos.as_ref(), text, style)
+                    match &marked {
+                        Some(m) => {
+                            let (s, cs, g, mi) =
+                                ceps::lex::text_to_phones_marked(c, pos.as_ref(), m, style);
+                            ctls = cs;
+                            (s, g, mi)
+                        }
+                        None => ceps::lex::text_to_phones_tagged(c, pos.as_ref(), text, style),
+                    }
                 }
                 None => {
+                    if marked.is_some() {
+                        println!("markup: the festival front end ignores it; text only");
+                    }
                     let (lex, lts) = fest.as_ref().expect("festival fallback");
                     ceps::text_to_phones_styled(lex, lts.as_ref(), text, style)
                 }
@@ -1061,10 +1153,13 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
             let _ = (&tfeats, &types, &sp, &ends);
             // One utterance at a time, as the engine does: see src/speak.rs.
             let t = Instant::now();
-            let said = ceps::say_phones(&v, &seq);
+            let mut said = Vec::new();
+            ceps::speak::say_phones_each_ctl(&v, &seq, port_flags(&a), ceps::speak::word_ctl(&ctls),
+                                              |s| said.push(s));
             let sel_dt = t.elapsed();
             let t2 = Instant::now();
-            let pcm: Vec<i16> = said.iter().flat_map(|s| s.pcm.iter().copied()).collect();
+            let mut pcm: Vec<i16> = said.iter().flat_map(|s| s.pcm.iter().copied()).collect();
+            ceps::speak::apply_volume(&mut pcm, volume);
             let units: usize = said.iter().map(|s| s.units.len()).sum();
             let pieces: usize = said.iter().map(|s| s.pieces.len()).sum();
             let secs = pcm.len() as f64 / v.sps as f64;

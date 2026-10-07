@@ -195,6 +195,7 @@ impl Lexicon {
                     word: Some(word.to_lowercase()),
                     word_id: 0,
                     syl_end: Some(k + 1 == s.phones.len()),
+                    dur: None,
                 });
             }
         }
@@ -357,18 +358,145 @@ pub fn text_to_phones_tagged(
     style: crate::norm::DigitStyle,
 ) -> (Vec<Phone>, Vec<(String, Source)>, Vec<String>) {
     let toks = crate::norm::normalize_with(text, style, |w| cep.lookup(w).is_some());
-    let tags = pos.map(|p| utterance_tags(p, &toks)).unwrap_or_default();
+    let (out, _, guessed, missing) = phones_from_tokens(cep, pos, toks, &[], Default::default());
+    (out, guessed, missing)
+}
 
-    let mut out = vec![Phone::pause()];
+/// The same from marked-up text. The second list holds each word's controls,
+/// indexed by `Phone::word_id - 1`.
+pub fn text_to_phones_marked(
+    cep: &crate::ceplex::CepLex,
+    pos: Option<&crate::postag::PosTag>,
+    m: &crate::markup::Marked,
+    style: crate::norm::DigitStyle,
+) -> (Vec<Phone>, Vec<crate::markup::Ctl>, Vec<(String, Source)>, Vec<String>) {
+    let (toks, marks, lead) =
+        crate::norm::normalize_marked(m, style, |w| cep.lookup(w).is_some());
+    phones_from_tokens(cep, pos, toks, &marks, lead)
+}
+
+/// swift.dll's `default_lexical_insertion` @0x14380 for a word whose phones are
+/// given. With any `.` in the list, `.` closes a syllable; otherwise the
+/// lexicon's boundary test (maximal onset) does, after each phone. A stress
+/// digit, on a phone or alone, sets the stress of the syllable it is in; the
+/// last one wins and a syllable without one is `0`. The syllable's stress goes
+/// on its vowels, which is where `target` reads it back from.
+pub fn phoneme_word(items: &[String], word: &str) -> Vec<Phone> {
+    let dots = items.iter().any(|x| x == "." || x == "SB");
+    // (phone, syllable) for each segment, and each syllable's stress
+    let mut segs: Vec<(String, usize)> = Vec::new();
+    let mut stress: Vec<u8> = Vec::new();
+    let mut open = false;
+    for (k, it) in items.iter().enumerate() {
+        if !open {
+            stress.push(0);
+            open = true;
+        }
+        let syl = stress.len() - 1;
+        if dots && (it == "." || it == "SB") {
+            open = false;
+            continue;
+        }
+        let (name, digit) = match it.char_indices().last() {
+            Some((i, c)) if c.is_ascii_digit() && !crate::phoneset::known(it) => (&it[..i], Some(c)),
+            _ => (it.as_str(), None),
+        };
+        if let Some(d) = digit {
+            stress[syl] = d as u8 - b'0';
+        }
+        if name.is_empty() {
+            continue;
+        }
+        segs.push((name.to_string(), syl));
+        if !dots {
+            // The boundary test (ceplex_us.dll @0x150c) sees the raw items still
+            // to come. A lone stress digit is one of them, and not a vowel --
+            // its vowel test is the first letter being in "aeiou" -- so it can
+            // hold a consonant in the syllable before.
+            let names: Vec<&str> = segs.iter().map(|(p, _)| p.as_str())
+                .chain(items[k + 1..].iter().map(|x| {
+                    let lone = x.len() == 1 && x.as_bytes()[0].is_ascii_digit();
+                    if lone { x.as_str() } else { x.trim_end_matches(|c: char| c.is_ascii_digit()) }
+                }))
+                .collect();
+            let i = segs.len() - 1;
+            let start = segs.iter().position(|&(_, s)| s == syl).unwrap_or(i);
+            if crate::rules::syl_boundary(&names, i, start) {
+                open = false;
+            }
+        }
+    }
+    let lower = word.to_lowercase();
+    let mut out: Vec<Phone> = Vec::with_capacity(segs.len());
+    for (i, (p, syl)) in segs.iter().enumerate() {
+        let last = segs.get(i + 1).map_or(true, |(_, s)| s != syl);
+        let vowelless = !segs.iter().any(|(q, s)| s == syl && crate::phoneset::is_vowel(q));
+        let first = i == 0 || segs[i - 1].1 != *syl;
+        let carries = crate::phoneset::is_vowel(p) || (vowelless && first);
+        out.push(Phone {
+            phone: p.clone(),
+            stress: if carries { stress[*syl] } else { 0 },
+            word: Some(lower.clone()),
+            word_id: 0,
+            syl_end: Some(last),
+            dur: None,
+        });
+    }
+    out
+}
+
+fn timed_pause(secs: f32) -> Phone {
+    Phone { dur: Some(secs), ..Phone::pause() }
+}
+
+/// `marks` is one entry per `Token::Word`, or empty for none.
+fn phones_from_tokens(
+    cep: &crate::ceplex::CepLex,
+    pos: Option<&crate::postag::PosTag>,
+    toks: Vec<Token>,
+    marks: &[crate::norm::WordMarks],
+    lead: crate::norm::Opens,
+) -> (Vec<Phone>, Vec<crate::markup::Ctl>, Vec<(String, Source)>, Vec<String>) {
+    let tags = pos.map(|p| utterance_tags(p, &toks)).unwrap_or_default();
+    let pause = |d: Option<f32>| d.map_or_else(Phone::pause, timed_pause);
+
+    // default_pause_insertion adds a break's timed pause before any phrase or
+    // utterance pause exists, and those then see a pause already in place and
+    // add none: the timed pause takes the place of the one that would be there.
+    // An empty utterance is a lone pause, which `speak::utterances` splits off.
+    let mut word_ctls = Vec::new();
+    let mut out: Vec<Phone> = lead.empties.iter().map(|&d| pause(d)).collect();
+    out.push(pause(lead.first));
     let mut guessed = Vec::new();
     let mut missing = Vec::new();
     let mut word_id = 0u32;
     let mut seen = 0usize;
+    let mut pending: Option<f32> = None;
+    let mut opens: Option<crate::norm::Opens> = None;
+    // No word yet in the utterance being built. The engine synthesises an
+    // utterance with no words too -- `cat .` ends one before the `.` -- and it
+    // renders as the lone pause that opened it.
+    let mut fresh = true;
     for t in toks {
         match t {
             Token::Word(w) => {
+                out.extend(pending.take().map(timed_pause));
+                opens = None;
                 let tag = tags.get(seen).and_then(|t| t.as_deref());
                 seen += 1;
+                let mark = marks.get(seen - 1).cloned().unwrap_or_default();
+                if let Some(items) = &mark.phones {
+                    let p = phoneme_word(items, &w);
+                    if !p.is_empty() {
+                        word_id += 1;
+                        word_ctls.push(mark.ctl);
+                        out.extend(p.into_iter().map(|mut q| { q.word_id = word_id; q }));
+                        fresh = false;
+                    }
+                    pending = mark.break_after;
+                    opens = mark.opens;
+                    continue;
+                }
                 let (ph, from_lts) = cep.phones_tag(&w, tag);
                 if ph.is_empty() {
                     missing.push(w);
@@ -379,32 +507,51 @@ pub fn text_to_phones_tagged(
                 }
                 if let Some(p) = cep.word_phones_tag(&w, tag) {
                     word_id += 1;
+                    word_ctls.push(mark.ctl);
                     out.extend(p.into_iter().map(|mut q| { q.word_id = word_id; q }));
+                    pending = mark.break_after;
+                    opens = mark.opens;
+                    fresh = false;
                 }
             }
             // a sentence end is two pauses: one closing, one opening
             Token::Break(hard, _) => {
                 if !matches!(out.last(), Some(p) if p.phone == "pau") {
-                    out.push(Phone::pause());
+                    out.push(pause(pending.take()));
                     if hard {
-                        out.push(Phone::pause());
+                        let o = opens.take().unwrap_or_default();
+                        out.extend(o.empties.iter().map(|&d| pause(d)));
+                        out.push(pause(o.first));
+                        fresh = true;
                     }
+                } else if hard && fresh {
+                    // an utterance with no words ends: its opening pause stays
+                    // as it is, and the next one opens
+                    out.push(Phone::pause());
                 }
             }
         }
     }
     if !matches!(out.last(), Some(p) if p.phone == "pau") {
-        out.push(Phone::pause());
+        out.push(pause(pending.take()));
     }
-    // a trailing pair from a final full stop collapses back to one
-    while out.len() >= 2
-        && out[out.len() - 1].is_pause()
+    // a trailing pair from a final full stop collapses back to one, unless the
+    // last utterance is one with no words
+    while !fresh
+        && out.len() >= 2
+        && out[out.len() - 1].is_pause() && out[out.len() - 1].dur.is_none()
         && out[out.len() - 2].is_pause()
     {
         out.pop();
     }
+    // an utterance break at the very end leaves an empty utterance open, and
+    // the engine synthesises that too
+    if let Some(o) = opens.take() {
+        out.extend(o.empties.iter().map(|&d| pause(d)));
+        out.push(pause(o.first));
+    }
     crate::postlex::apply(&mut out);
-    (out, guessed, missing)
+    (out, word_ctls, guessed, missing)
 }
 
 pub fn text_to_phones_styled(

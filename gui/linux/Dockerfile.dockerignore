@@ -1,0 +1,14 @@
+# The context is ceps, which holds gigabytes of
+# research captures; send only the crate and the four voices.
+*
+!ceps-rs
+ceps-rs/.git
+ceps-rs/target
+ceps-rs/dist
+ceps-rs/gui/target
+ceps-rs/gui/dist
+ceps-rs/gui/gen
+!William
+!Allison
+!David
+!Jean-Pierre

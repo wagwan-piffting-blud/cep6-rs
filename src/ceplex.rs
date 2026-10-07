@@ -399,15 +399,45 @@ impl CepLex {
     ///
     /// swift.dll keeps two lexicons: the compressed one this reader decodes, and
     /// an addenda list with `data`/`num_bytes` NULL whose entries live as plain
-    /// C arrays. Only one of them shows up in ordinary text -- `_a`, the letter
-    /// A that `en_exp_letters` produces -- and the value here is the engine's
-    /// own answer, captured with `_out/run_lex.py`: `lex_lookup("_a")` returns
-    /// `ey1` and never reaches the letter-to-sound rules.
+    /// C arrays: `_a`, the letter A that `en_exp_letters` produces, and the
+    /// punctuation marks, which reach the lexicon as words when a token is
+    /// nothing else or a `<say-as>` spells one out. These are the engine's own
+    /// answers, captured with `_out/run_lexdump.py`; `"`, `(` and `)` have none.
     fn addendum(word: &str) -> Option<Vec<String>> {
-        match word {
-            "_a" => Some(vec!["ey1".to_string()]),
-            _ => None,
-        }
+        let p = match word {
+            "_a" => "ey1",
+            "!" => "eh0 k s k l ah0 m ey1 sh ah0 n p oy1 n t",
+            "#" => "h ae1 sh",
+            "$" => "d aa1 l er0",
+            "%" => "p er0 s eh1 n t",
+            "&" => "ae1 n d",
+            "'" => "ah0 p aa1 s t r ah0 f i0",
+            "*" => "ae1 s t ah0 r ih0 s k",
+            "+" => "p l ah1 s",
+            "," => "k aa1 m ah0",
+            "-" => "d ae1 sh",
+            "." => "d aa1 t",
+            "/" => "s l ae1 sh",
+            ":" => "k ow1 l ah0 n",
+            ";" => "s eh1 m i0 k ow1 l ah0 n",
+            "<" => "l eh1 s dh ae1 n",
+            "=" => "i1 k w ah0 l z",
+            ">" => "g r ey1 t er0 dh ae1 n",
+            "?" => "k w eh1 s ch ah0 n m aa1 r k",
+            "@" => "ae1 t",
+            "[" => "ow1 p ah0 n s k w eh1 r b r ae1 k ah0 t",
+            "\\" => "b ae1 k s l ae0 sh",
+            "]" => "k l ow1 z s k w eh1 r b r ae1 k ah0 t",
+            "^" => "k eh1 r ih0 t",
+            "_" => "ah1 n d er0 s k ao0 r",
+            "`" => "b ae1 k k w ow1 t",
+            "{" => "ow1 p ah0 n b r ey1 s",
+            "|" => "b aa1 r",
+            "}" => "k l ow1 z b r ey1 s",
+            "~" => "t ih1 l d ah0",
+            _ => return None,
+        };
+        Some(p.split(' ').map(str::to_string).collect())
     }
 
     pub fn phones(&self, word: &str) -> (Vec<String>, bool) {
@@ -416,16 +446,6 @@ impl CepLex {
 
     /// `phones` for a word the tagger reached. `None` is the untagged rule.
     pub fn phones_tag(&self, word: &str, tag: Option<&str>) -> (Vec<String>, bool) {
-        // The tokenizer passes these through as words and the engine's
-        // dictionary answers them, though none is in the compiled lexicon this
-        // pack decodes. Only the four the SAPI captures have shown are here.
-        let word = match word {
-            "+" => "plus",
-            "/" => "slash",
-            ":" => "colon",
-            "@" => "at",
-            w => w,
-        };
         match self.lookup_tag(word, tag) {
             Some(p) => (p, false),
             None => (self.lts(word), true),
@@ -456,6 +476,7 @@ impl CepLex {
                         word: Some(lower.clone()),
                         word_id: 0,
                         syl_end: None,
+                        dur: None,
                     }
                 })
                 .collect(),

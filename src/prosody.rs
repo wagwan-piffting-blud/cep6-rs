@@ -187,9 +187,65 @@ pub fn join_units_streamed(v: &Voice, units: &[TargetUnit], pieces: &[usize]) ->
     st.out
 }
 
+/// `join_units_streamed` with a duration stretch and an f0 factor per unit:
+/// swift.dll's `simple_join` path in full. Per piece, @0x29ba0/@0x29a90 lay out
+/// pitch marks -- with `b = stretch * f0`, `frames * b` periods, period `i`
+/// sized `frame_size(start + i / b) / f0` -- and set each unit's `target_end`
+/// to where its marks end; @0x2ad00 then maps those marks back onto source
+/// frames. At b = 1 this is exactly the plain path, which is why that one can
+/// skip it.
+pub fn join_units_timed(
+    v: &Voice,
+    units: &[TargetUnit],
+    stretch: &[f32],
+    f0: &[f32],
+    pieces: &[usize],
+) -> Vec<i16> {
+    let mut st = LpcState::new(v);
+    let mut at = 0usize;
+    let mut bounds: Vec<usize> = pieces.to_vec();
+    let rest = units.len().saturating_sub(pieces.iter().sum());
+    if rest > 0 {
+        bounds.push(rest);
+    }
+    for n in bounds {
+        let end = (at + n).min(units.len());
+        let mut pms = Vec::new();
+        let mut timed: Vec<TargetUnit> = Vec::with_capacity(end - at);
+        let mut pos = 0i32;
+        for ((u, &s), &f) in units[at..end].iter().zip(&stretch[at..end]).zip(&f0[at..end]) {
+            let f = if f > 0.0 { f } else { 1.0 };
+            let b = s * f;
+            let b = if b > 0.0 { b } else { 1.0 };
+            let nper = ((u.end - u.start) as f32 * b) as i32;
+            for i in 0..nper {
+                let fr = u.start + (i as f32 / b) as i32;
+                pos += (v.frame_size(fr as usize) as f32 / f) as i32;
+                pms.push(pos);
+            }
+            timed.push(TargetUnit { target_end: pos, ..*u });
+        }
+        st.new_piece();
+        for p in concat_units(v, &timed, &pms) {
+            st.emit_period(v, p.src_frame, p.size, p.gain);
+        }
+        at = end;
+    }
+    st.out
+}
+
+/// The stretch @0x297c0 gives a unit with an explicit duration: target samples
+/// over the unit's own.
+pub fn stretch_to(v: &Voice, start: i32, end: i32, target: i32) -> f32 {
+    let own = unit_size(v, start, end) as f32;
+    if own == 0.0 { 1.0 } else { target as f32 / own }
+}
+
 pub fn gain_from_rescale(rescale: f32) -> i32 {
-    // 0x2ad72: mulss by 32768 then cvttss2si
-    (rescale * 32768.0) as i32
+    // 0x2ad72: mulss by 32768 then cvttss2si. A negative rescale
+    // (volume="-150%") renders exactly as silent does; where the engine
+    // floors it is not found, so relative values nested after one are unchecked.
+    (rescale.max(0.0) * 32768.0) as i32
 }
 
 const _: () = assert!(GAIN_UNITY == 0x8000);

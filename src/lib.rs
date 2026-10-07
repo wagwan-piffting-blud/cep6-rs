@@ -16,10 +16,12 @@ pub mod f0;
 pub mod ceplex;
 pub mod lex;
 pub mod lts;
+pub mod markup;
 pub mod norm;
 pub mod postag;
 pub mod postlex;
 pub mod prosody;
+pub mod render;
 pub mod rules;
 pub mod score;
 pub mod select;
@@ -48,6 +50,7 @@ pub use lex::{text_to_phones, text_to_phones_cepstral, text_to_phones_styled,
               tokenize, Lexicon, Source,
               Syl, Token};
 pub use lts::Lts;
+pub use markup::{Ctl, Marked};
 pub use norm::{normalize, normalize_with, DigitStyle};
 pub use trace::{Coeffs, Hit, Trace, Tracer};
 pub use ceplex::CepLex;

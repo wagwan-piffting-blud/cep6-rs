@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Ceps</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <nav id="markup" aria-label="Markup">
+        <button type="button" data-wrap='["&lt;emphasis&gt;","&lt;/emphasis&gt;"]' title="Ctrl/⌘ E">Emphasis</button>
+        <div class="menu" data-title="Pause"></div>
+        <div class="menu" data-title="Rate"></div>
+        <div class="menu" data-title="Pitch"></div>
+        <div class="menu" data-title="Volume"></div>
+        <div class="menu" data-title="Say As"></div>
+        <div class="menu" data-title="Phoneme"></div>
+    </nav>
+
+    <textarea id="text" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+              placeholder="Type or paste text. Plain text reads as is; with “Read markup” on, SSML and SAPI XML tags act."></textarea>
+
+    <section id="controls">
+        <div class="row">
+            <label for="voice">Voice</label>
+            <select id="voice"></select>
+            <button type="button" id="voicesBtn" title="Choose the folder your Cepstral voices are in">Voices…</button>
+            <label class="check"><input type="checkbox" id="readMarkup"> Read markup (SSML / SAPI XML)</label>
+        </div>
+        <div class="row">
+            <label for="rate">Rate</label>
+            <input type="range" id="rate" min="-10" max="10" step="1" list="rateTicks">
+            <input type="number" id="rateN" min="-10" max="10" step="1">
+            <span class="unit"></span>
+        </div>
+        <div class="row">
+            <label for="pitch">Pitch</label>
+            <input type="range" id="pitch" min="50" max="200" step="1">
+            <input type="number" id="pitchN" min="50" max="200" step="1">
+            <span class="unit">%</span>
+        </div>
+        <div class="row">
+            <label for="volume">Volume</label>
+            <input type="range" id="volume" min="0" max="100" step="1">
+            <input type="number" id="volumeN" min="0" max="100" step="1">
+            <span class="unit">%</span>
+        </div>
+        <datalist id="rateTicks"></datalist>
+    </section>
+
+    <footer>
+        <div class="bar">
+            <button type="button" id="phonemesBtn">Phonemes…</button>
+            <button type="button" id="defaultsBtn">Defaults</button>
+            <span class="grow"></span>
+            <span id="spinner" hidden></span>
+            <button type="button" id="saveBtn">Save to File…</button>
+            <button type="button" id="stopBtn" title="Ctrl/⌘ .">Stop</button>
+            <button type="button" id="speakBtn" class="primary" title="Ctrl/⌘ Enter">Speak</button>
+        </div>
+        <div id="status"></div>
+    </footer>
+
+    <dialog id="builder">
+        <form method="dialog">
+            <p class="caption">Pronunciation — Cepstral phones separated by spaces; vowels end in a stress digit</p>
+            <input type="text" id="phField" spellcheck="false" autocomplete="off" placeholder="e.g. t ah0 m ey1 t ow0">
+            <p id="readsAs"> </p>
+            <p id="phStatus"> </p>
+            <div class="stressRow">
+                <span>Vowel stress:</span>
+                <div class="segmented" role="radiogroup">
+                    <label><input type="radio" name="stress" value="0"> Unstressed (0)</label>
+                    <label><input type="radio" name="stress" value="1" checked> Primary (1)</label>
+                    <label><input type="radio" name="stress" value="2"> Secondary (2)</label>
+                </div>
+                <span class="grow"></span>
+                <button type="button" id="sylBreak">Syllable break .</button>
+                <button type="button" id="wordBreak">Word break |</button>
+            </div>
+            <p class="caption">Consonants</p>
+            <div class="grid" data-kind="c"></div>
+            <p class="caption">Vowels</p>
+            <div class="grid" data-kind="v"></div>
+            <p class="caption">Diphthongs</p>
+            <div class="grid" data-kind="d"></div>
+            <div class="bar">
+                <button type="button" id="phRemove">Remove Last</button>
+                <button type="button" id="phClear">Clear</button>
+                <button type="button" id="phPreview">▶ Preview</button>
+                <span class="grow"></span>
+                <button type="button" id="phCancel">Cancel</button>
+                <button type="button" id="phCommit" class="primary">Insert</button>
+            </div>
+        </form>
+    </dialog>
+
+    <dialog id="confirm">
+        <form method="dialog">
+            <h2 id="confirmTitle"></h2>
+            <p id="confirmBody"></p>
+            <div class="bar">
+                <span class="grow"></span>
+                <button value="cancel">Cancel</button>
+                <button value="ok" id="confirmOk" class="primary"></button>
+            </div>
+        </form>
+    </dialog>
+
+    <script src="phonemes.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -14,7 +14,7 @@
 
 use crate::carts::{Node, PHRASING_FEATS, PHRASING_NODES};
 
-const DIGIT2NUM: [&str; 10] = [
+pub(crate) const DIGIT2NUM: [&str; 10] = [
     "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
 ];
 const DIGIT2TEEN: [&str; 10] = [
@@ -62,6 +62,15 @@ pub struct Tok {
     pub punc: String,
     /// The whitespace *before* this token. `utt_break` needs it.
     pub ws: String,
+    /// Marked `break` by an SSML `<break>`, which the phrasing tree reads.
+    pub brk: bool,
+    /// An SSML `<break>` of medium strength or more ends the utterance here.
+    pub utt_end: bool,
+    /// A `<phoneme>` token (swift.dll @0x3ae60): its name is the raw `ph` and
+    /// these are its words' phone items. The text rules never see it as text.
+    pub phones: Option<Vec<Vec<String>>>,
+    /// The `nsw` a `<say-as>` put on it (swift.dll @0x3ba50).
+    pub nsw: Option<String>,
 }
 
 /// One word out of a token, with the phrase break flag `add_break` sets.
@@ -73,11 +82,13 @@ pub struct Word {
     /// expansion. The phone stream has no use for it, but the part-of-speech
     /// tagger does -- the model is full of features like `W0+1_County_,`.
     pub punc: String,
+    /// The index of the token this word came from, within its utterance.
+    pub tok: usize,
 }
 
 impl Word {
     pub(crate) fn new(t: &str) -> Word {
-        Word { text: t.to_string(), brk: false, punc: String::new() }
+        Word { text: t.to_string(), brk: false, punc: String::new(), tok: 0 }
     }
 }
 
@@ -96,25 +107,43 @@ pub(crate) fn add_break(mut l: Vec<Word>) -> Vec<Word> {
 // ---------------------------------------------------------------- tokenizer
 
 pub fn tokenize(text: &str) -> Vec<Tok> {
+    tokenize_split(text, &[]).0
+}
+
+/// The same with a token boundary forced at each char index in `splits`,
+/// ascending, also returning the char index each token starts at. swift.dll's
+/// SSML reader tokenizes the text between two tags on its own, so
+/// `fo<break/>x` is the tokens "fo" and "x", and whitespace before a tag is
+/// the end of one chunk rather than part of the next token's.
+pub fn tokenize_split(text: &str, splits: &[usize]) -> (Vec<Tok>, Vec<usize>) {
+    let split = |i: usize| splits.binary_search(&i).is_ok();
     let ch: Vec<char> = text.chars().collect();
     let mut out: Vec<Tok> = Vec::new();
+    let mut starts = Vec::new();
     let mut i = 0usize;
     while i < ch.len() {
         let mut ws = String::new();
         while i < ch.len() && ch[i].is_whitespace() {
+            if split(i) {
+                ws.clear();
+            }
             ws.push(ch[i]);
             i += 1;
         }
         if i >= ch.len() {
             break;
         }
+        if split(i) {
+            ws.clear();
+        }
+        starts.push(i);
         let mut pre = String::new();
         while i < ch.len() && PREPUNCT.contains(ch[i]) {
             pre.push(ch[i]);
             i += 1;
         }
         let mut name = String::new();
-        while i < ch.len() && !ch[i].is_whitespace() {
+        while i < ch.len() && !ch[i].is_whitespace() && !(split(i) && !name.is_empty()) {
             name.push(ch[i]);
             i += 1;
         }
@@ -128,39 +157,54 @@ pub fn tokenize(text: &str) -> Vec<Tok> {
             name.pop();
             punc.insert(0, c);
         }
-        out.push(Tok { pre, name, punc, ws });
+        out.push(Tok { pre, name, punc, ws, ..Tok::default() });
     }
-    out
+    (out, starts)
 }
 
-/// swift.dll's `default_utt_break`, with the one change the engine shows: a
-/// semicolon ends an utterance too. Probed on "We saw red; white and blue.",
-/// which comes back as two utterances with two pauses between them.
+/// ceplang_en.dll's utterance breaker @0x4e220, which the voice registers
+/// with `breakfunc_val` in place of swift.dll's `default_utt_break`. Does the
+/// utterance end before `toks[i + 1]`?
+///
+/// Its tests are C's `strchr` into a set of letters, and `strchr` finds the
+/// terminator, so an empty string's "first character" is in every set.
 pub fn utt_break(toks: &[Tok], i: usize) -> bool {
     let last = &toks[i];
     let Some(next) = toks.get(i + 1) else { return true };
-    let nc = next.name.chars().next().unwrap_or(' ');
-    if next.ws.matches('\n').count() > 1 {
+    let first = |s: &str| s.bytes().next();
+    let upper = |c: Option<u8>| c.map_or(true, |c| c.is_ascii_uppercase());
+    let lower = |c: Option<u8>| c.map_or(true, |c| c.is_ascii_lowercase());
+    let (ws, lname, lpunc, name) = (&next.ws, &last.name, &last.punc, &next.name);
+
+    // a blank line: strchr and strrchr find different newlines
+    if ws.find('\n') != ws.rfind('\n') {
         return true;
     }
-    if last.punc.contains(':') || last.punc.contains(';')
-        || last.punc.contains('?') || last.punc.contains('!')
+    if ws.contains('\n') && upper(first(name)) && next.punc == ":" {
+        return true;
+    }
+    if lpunc.contains([':', ';', '?', '!']) {
+        return true;
+    }
+    if lpunc.contains('.') && (ws.len() > 1 || ws == "\n") {
+        return true;
+    }
+    // a full stop before a capital, unless the word looks like an abbreviation:
+    // one ending in a capital, a short capitalised one, or a short one with a
+    // dot inside
+    if lpunc.contains('.') && upper(first(name)) && !upper(lname.bytes().last())
+        && (lname.len() >= 4 || (!upper(first(lname)) && !lname.contains('.')))
     {
         return true;
     }
-    if last.punc.contains('.') && next.ws.chars().count() > 1 && nc.is_ascii_uppercase() {
+    if lpunc.contains('.') && lower(first(lname)) && lname.len() > 3 {
         return true;
     }
-    if last.punc.contains('.') && nc.is_ascii_uppercase() {
-        // not an abbreviation: those end in a capital, or are short and start
-        // with one, and keep the sentence running
-        let lc = last.name.chars().next_back().unwrap_or(' ');
-        let first = last.name.chars().next().unwrap_or(' ');
-        let abbrev = lc.is_ascii_uppercase()
-            || (last.name.chars().count() < 4 && first.is_ascii_uppercase());
-        return !abbrev;
+    if name.len() > 42 || lname.len() > 42 {
+        return true;
     }
-    false
+    // a token that is nothing but one of these starts an utterance of its own
+    matches!(name.as_str(), ":" | ";" | "?" | "!" | ".")
 }
 
 /// Split into utterances at the points `utt_break` marks.
@@ -168,7 +212,7 @@ pub fn utterances(toks: Vec<Tok>) -> Vec<Vec<Tok>> {
     let mut out: Vec<Vec<Tok>> = Vec::new();
     let mut cur: Vec<Tok> = Vec::new();
     for i in 0..toks.len() {
-        let brk = utt_break(&toks, i);
+        let brk = toks[i].utt_end || utt_break(&toks, i);
         cur.push(toks[i].clone());
         if brk {
             out.push(std::mem::take(&mut cur));
@@ -268,7 +312,7 @@ pub fn exp_letters(s: &str) -> Vec<Word> {
             } else if l == 'a' {
                 Word::new("_a")
             } else {
-                Word { text: l.to_string(), brk: false, punc: String::new() }
+                Word::new(&l.to_string())
             }
         })
         .collect()
@@ -450,7 +494,7 @@ fn phrase_break(tok: &Tok, next: Option<&Tok>, brk: bool, last: bool, final_word
                     "punc".into(),
                 _ => "0".into(),
             },
-            "R:Token.parent.break" => "0".into(),
+            "R:Token.parent.break" => if tok.brk { "1".into() } else { "0".into() },
             "R:Token.parent.n.name" => next.map(|t| t.name.clone()).unwrap_or_default(),
             "R:Token.parent.n.prepunctuation" =>
                 next.map(|t| t.pre.clone()).unwrap_or_default(),
@@ -467,8 +511,14 @@ pub fn utterance_words(toks: &[Tok], known: &dyn Fn(&str) -> bool, digits_style:
     -> Vec<Word>
 {
     crate::t2w::begin(toks.len());
+    // a <phoneme> token is named with its `ph` and gives one word per `|`
+    // group, which the lexicon never looks up
     let per_token: Vec<Vec<Word>> = (0..toks.len())
-        .map(|i| crate::t2w::token_words(toks, i, known, digits_style))
+        .map(|i| match &toks[i].phones {
+            Some(ws) if ws.len() == 1 => vec![Word::new(&toks[i].name)],
+            Some(ws) => ws.iter().map(|w| Word::new(&w.join(" "))).collect(),
+            None => crate::t2w::token_words(toks, i, known, digits_style),
+        })
         .collect();
     // phrasing reads the token features as the rules left them
     let edited: Vec<Tok> = toks
@@ -478,7 +528,7 @@ pub fn utterance_words(toks: &[Tok], known: &dyn Fn(&str) -> bool, digits_style:
             pre: f.pre.unwrap_or_else(|| t.pre.clone()),
             name: f.name.unwrap_or_else(|| t.name.clone()),
             punc: f.punc.unwrap_or_else(|| t.punc.clone()),
-            ws: t.ws.clone(),
+            ..t.clone()
         })
         .collect();
     let toks = &edited[..];
@@ -503,7 +553,7 @@ pub fn utterance_words(toks: &[Tok], known: &dyn Fn(&str) -> bool, digits_style:
         let brk = phrase_break(&toks[*i], toks.get(i + 1), w.brk, last, k + 1 == total);
         // the token's punctuation belongs to the last word it expanded into
         let punc = if last { toks[*i].punc.clone() } else { String::new() };
-        out.push(Word { text: w.text.clone(), brk, punc });
+        out.push(Word { text: w.text.clone(), brk, punc, tok: *i });
     }
     out
 }

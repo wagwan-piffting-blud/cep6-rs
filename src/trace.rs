@@ -384,7 +384,7 @@ impl Tracer<'_> {
                     .and_then(|c| c.to_digit(10))
                     .unwrap_or(0) as u8;
                 let phone = if base.starts_with("pau") { "pau".to_string() } else { base };
-                crate::rules::Phone { phone, stress, word: None, word_id: 0, syl_end: None }
+                crate::rules::Phone { phone, stress, word: None, word_id: 0, syl_end: None, dur: None }
             })
             .collect()
     }

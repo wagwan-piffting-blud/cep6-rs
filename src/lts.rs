@@ -136,6 +136,7 @@ impl Lts {
                     word: Some(word.to_lowercase()),
                     word_id: 0,
                     syl_end: None,
+                    dur: None,
                 });
             }
         }
