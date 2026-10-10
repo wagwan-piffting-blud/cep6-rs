@@ -1,17 +1,23 @@
 //! cep6 <voice-directory> <command> [args]
 //!
+//! <voice-directory> may also be just a voice's name (David) when Cepstral
+//! Swift is installed. A bare output file name that the current folder will
+//! not take (Program Files without admin rights) is written to the Desktop.
+//!
 //! Commands:
+//!   text   "some words" <out.wav>                            # the whole front end
+//!   speak, say                                               # the same as text
+//!   file   <in.txt> <out.wav>                                # the same, from a file
+//!
 //!   info
 //!   types  [substring]
 //!   frames <first> <count> <out.wav>
 //!   unit   <index> <out.wav>
 //!   chain  <first_unit> <out.wav>
-//!   say    "type1 type2 ..." <out.wav>
-//!   speak  <score.txt> <out.wav>                             # prosody path (f0 + durations)
+//!   say-types   "type1 type2 ..." <out.wav>                  # unit types, no front end
+//!   speak-score <score.txt> <out.wav>                        # prosody path (f0 + durations)
 //!   pace   "type1 type2 ..." <secs/unit> <f0> <out.wav>
-//!   pipeline "pau h eh:1 l ow:1 pau" <out.wav>               # full chain
-//!   text   "some words" <out.wav>                            # the whole front end
-//!   file   <in.txt> <out.wav>                                # the same, from a file
+//!   pipeline "pau h eh:1 l ow:1 pau" <out.wav>               # phones in, audio out
 //!   names / target-cost / dur / f0 / self-test               # model dumps
 //!   bench  [frames]
 //!
@@ -185,6 +191,124 @@ fn port_flags(a: &[String]) -> ceps::speak::Port {
     port
 }
 
+/// Why `p` could not be opened, in words: which folder of it is missing (and
+/// where a relative path was looked for), or cmd's `"...\"` trap, which makes
+/// the closing quote part of the path.
+fn path_hint(p: &str) -> String {
+    if p.contains('"') {
+        return " (a quoted path must not end in a backslash: cmd reads \\\" as a \
+                literal quote and runs the arguments together)".into();
+    }
+    let path = std::path::Path::new(p);
+    let base = if path.is_relative() {
+        std::env::current_dir().ok()
+    } else {
+        None
+    };
+    let full = base.as_ref().map_or_else(|| path.to_path_buf(), |b| b.join(path));
+    let mut have = full.as_path();
+    while !have.exists() {
+        match have.parent() {
+            Some(up) => have = up,
+            None => break,
+        }
+    }
+    let mut s = String::new();
+    if let Some(b) = &base {
+        s += &format!(" (relative to the current folder {})", b.display());
+    }
+    if have != full.as_path() && have.exists() {
+        let missing = full.strip_prefix(have).ok()
+            .and_then(|r| r.components().next())
+            .map(|c| c.as_os_str().to_string_lossy().into_owned())
+            .unwrap_or_default();
+        s += &format!("; {} has no {missing}", have.display());
+    }
+    s
+}
+
+/// The user's Desktop as Explorer has it, so a Desktop moved into OneDrive is
+/// still found.
+#[cfg(windows)]
+fn desktop_dir() -> Option<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    #[repr(C)]
+    struct Guid(u32, u16, u16, [u8; 8]);
+    #[link(name = "shell32")]
+    extern "system" {
+        fn SHGetKnownFolderPath(id: *const Guid, flags: u32, token: *mut std::ffi::c_void,
+                                path: *mut *mut u16) -> i32;
+    }
+    #[link(name = "ole32")]
+    extern "system" {
+        fn CoTaskMemFree(p: *mut std::ffi::c_void);
+    }
+    // FOLDERID_Desktop
+    const DESKTOP: Guid = Guid(0xB4BFCC3A, 0xDB2C, 0x424C,
+                               [0xB0, 0x29, 0x7F, 0xE9, 0x9A, 0x87, 0xC6, 0x41]);
+    let known = unsafe {
+        let mut p: *mut u16 = std::ptr::null_mut();
+        let hr = SHGetKnownFolderPath(&DESKTOP, 0, std::ptr::null_mut(), &mut p);
+        let dir = if hr >= 0 && !p.is_null() {
+            let n = (0..).take_while(|&i| *p.add(i) != 0).count();
+            Some(std::path::PathBuf::from(std::ffi::OsString::from_wide(
+                std::slice::from_raw_parts(p, n))))
+        } else {
+            None
+        };
+        CoTaskMemFree(p.cast());
+        dir
+    };
+    known.or_else(|| std::env::var_os("USERPROFILE").map(|h| std::path::Path::new(&h).join("Desktop")))
+        .filter(|d| d.is_dir())
+}
+
+#[cfg(not(windows))]
+fn desktop_dir() -> Option<std::path::PathBuf> {
+    let home = std::path::PathBuf::from(std::env::var_os("HOME")?);
+    Some(home.join("Desktop")).filter(|d| d.is_dir())
+}
+
+/// `write` at `path`, or, when `path` is a bare file name and the current
+/// folder will not take it (Program Files without admin rights, say), at the
+/// same name on the Desktop. Returns what was written and where.
+fn with_fallback<T>(path: &str, mut write: impl FnMut(&std::path::Path) -> std::io::Result<T>)
+    -> std::io::Result<(T, String)>
+{
+    let p = std::path::Path::new(path);
+    let e = match write(p) {
+        Ok(t) => return Ok((t, path.to_string())),
+        Err(e) => e,
+    };
+    let bare = p.parent().map_or(true, |d| d.as_os_str().is_empty());
+    let Some(desk) = desktop_dir().filter(|_| bare) else { return Err(e) };
+    let alt = desk.join(p);
+    eprintln!("cannot write {path} in the current folder ({e}); writing to the Desktop instead");
+    write(&alt).map(|t| (t, alt.display().to_string()))
+}
+
+/// What to add to "cannot write <path>: <e>": the missing folder, or for a
+/// refusal, that the folder is not writable.
+fn write_hint(path: &str, e: &std::io::Error) -> String {
+    match e.kind() {
+        std::io::ErrorKind::PermissionDenied => {
+            " (no permission to write in that folder; choose one you can write to)".into()
+        }
+        _ => path_hint(path),
+    }
+}
+
+/// Write the WAV, falling back to the Desktop; returns the path written.
+fn write_out(path: &str, pcm: &[i16], sps: u32) -> String {
+    match with_fallback(path, |p| wav::write(p, pcm, sps)) {
+        Ok(((), wrote)) => wrote,
+        Err(e) => {
+            eprintln!("cannot write {path}: {e}{}", write_hint(path, &e));
+            std::process::exit(1);
+        }
+    }
+}
+
 fn default_path(name: &str) -> String {
     if let Some(dir) = std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.to_path_buf())) {
         let p = dir.join(name);
@@ -209,10 +333,36 @@ fn main() {
         std::process::exit(if help { 0 } else { 1 });
     }
     let t0 = Instant::now();
-    let v = match Voice::open(&a[1]) {
+    // a bare name such as `David` that is not a folder here is looked up in
+    // the Cepstral Swift install
+    let voice_dir = match ceps::install::find_voice(&a[1]) {
+        Some(d) if d.as_path() != std::path::Path::new(&a[1]) => {
+            eprintln!("voice {}: {}", a[1], d.display());
+            d
+        }
+        _ => std::path::PathBuf::from(&a[1]),
+    };
+    let v = match Voice::open(&voice_dir) {
         Ok(v) => v,
         Err(e) => {
-            eprintln!("cannot open voice {}: {e}", a[1]);
+            let dir = std::path::Path::new(&a[1]);
+            let mut hint = if dir.is_dir() && !dir.join("voice.idx").is_file() {
+                " (that folder holds no voice.idx: name the voice's own folder, \
+                 e.g. ...\\voices\\David, not the voices folder above it)".to_string()
+            } else {
+                path_hint(&a[1])
+            };
+            if dir.components().count() == 1 && !dir.exists() {
+                let roots: Vec<String> = ceps::install::voice_roots().iter()
+                    .map(|r| r.display().to_string()).collect();
+                hint += &if roots.is_empty() {
+                    "; no Cepstral voices folder found either (set CEPS_VOICE_ROOT, or give the full path)"
+                        .to_string()
+                } else {
+                    format!("; not in {} either", roots.join(", "))
+                };
+            }
+            eprintln!("cannot open voice {}: {e}{hint}", a[1]);
             std::process::exit(1);
         }
     };
@@ -234,8 +384,8 @@ fn main() {
             let t = Instant::now();
             let pcm = synth::synth_frames(&v, first, first + count);
             report(&v, &pcm, t.elapsed());
-            wav::write(&a[5], &pcm, v.sps).unwrap();
-            println!("wrote {}", a[5]);
+            let wrote = write_out(&a[5], &pcm, v.sps);
+            println!("wrote {wrote}");
         }
         "unit" => {
             let i: usize = a[3].parse().unwrap();
@@ -243,8 +393,8 @@ fn main() {
             println!("unit {i} type={} frames [{},{}) prev={} next={}",
                      v.types[u.type_id as usize].name, u.start, u.end, u.prev, u.next);
             let pcm = synth::synth_units(&v, &[i]);
-            wav::write(&a[4], &pcm, v.sps).unwrap();
-            println!("wrote {}", a[4]);
+            let wrote = write_out(&a[4], &pcm, v.sps);
+            println!("wrote {wrote}");
         }
         "chain" => {
             let first: usize = a[3].parse().unwrap();
@@ -255,8 +405,8 @@ fn main() {
             let t = Instant::now();
             let pcm = synth::synth_units(&v, &ch);
             report(&v, &pcm, t.elapsed());
-            wav::write(&a[4], &pcm, v.sps).unwrap();
-            println!("wrote {}", a[4]);
+            let wrote = write_out(&a[4], &pcm, v.sps);
+            println!("wrote {wrote}");
         }
         "longest" => {
             let mut best = (0usize, 0usize);
@@ -271,7 +421,7 @@ fn main() {
             }
             println!("longest chain: unit {} ({} units)", best.0, best.1);
         }
-        "say" => {
+        "say-types" => {
             let names: Vec<&str> = a[3].split_whitespace().collect();
             let mut units = Vec::new();
             for n in &names {
@@ -284,13 +434,15 @@ fn main() {
                 }
             }
             let pcm = synth::synth_units(&v, &units);
-            wav::write(&a[4], &pcm, v.sps).unwrap();
-            println!("wrote {}", a[4]);
+            let wrote = write_out(&a[4], &pcm, v.sps);
+            println!("wrote {wrote}");
         }
-        "speak" | "pace" => {
-            let sc = if a[2] == "speak" {
+        "speak-score" | "pace" => {
+            let sc = if a[2] == "speak-score" {
                 let text = std::fs::read_to_string(&a[3]).unwrap_or_else(|e| {
-                    eprintln!("cannot read score {}: {e}", a[3]);
+                    eprintln!("cannot read score {}: {e}\n(speak-score renders a score file; to speak \
+                               text, use: cep6 {} text \"{}\" {})",
+                              a[3], a[1], a[3], a.get(4).map_or("out.wav", |s| s.as_str()));
                     std::process::exit(1);
                 });
                 ceps::score::parse(&v, &text)
@@ -302,7 +454,7 @@ fn main() {
                 eprintln!("{e}");
                 std::process::exit(1);
             });
-            let outp = if a[2] == "speak" { &a[4] } else { &a[6] };
+            let outp = if a[2] == "speak-score" { &a[4] } else { &a[6] };
             let do_select = a.iter().any(|x| x == "--select");
 
             if do_select {
@@ -385,8 +537,8 @@ fn main() {
                      periods.len());
             println!("units: {}", sc.names.join(" "));
             report(&v, &pcm, dt);
-            wav::write(outp, &pcm, v.sps).unwrap();
-            println!("wrote {outp}");
+            let wrote = write_out(outp, &pcm, v.sps);
+            println!("wrote {wrote}");
         }
         "tcost" => {
             let unp = v.unit_name_params().expect("no unit_name_params");
@@ -667,8 +819,8 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
                 println!("synth:  {n} samples from recorded periods, no padding");
                 ceps::join_units_simple(&v, &units)
             };
-            wav::write(outp, &pcm, v.sps).unwrap();
-            println!("wrote {outp}  {:.2} s", pcm.len() as f64 / v.sps as f64);
+            let wrote = write_out(outp, &pcm, v.sps);
+            println!("wrote {wrote}  {:.2} s", pcm.len() as f64 / v.sps as f64);
         }
         "finality" => {
             // What each lisp_finalityp / lisp_phone_break value means, read off
@@ -903,7 +1055,7 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
             let inp = &a[3];
             let outp = &a[4];
             let text = std::fs::read_to_string(inp).unwrap_or_else(|e| {
-                eprintln!("cannot read {inp}: {e}");
+                eprintln!("cannot read {inp}: {e}{}", path_hint(inp));
                 std::process::exit(1);
             });
             let style = if a.iter().any(|x| x == "--digits") {
@@ -953,10 +1105,12 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
             let real = seq.iter().filter(|p| !p.is_pause()).count();
             println!("phones: {real} in {:.1}s", t0.elapsed().as_secs_f32());
 
-            let mut w = ceps::wav::Writer::create(outp, v.sps).unwrap_or_else(|e| {
-                eprintln!("cannot write {outp}: {e}");
-                std::process::exit(1);
-            });
+            let (mut w, outp) = with_fallback(outp, |p| ceps::wav::Writer::create(p, v.sps))
+                .unwrap_or_else(|e| {
+                    eprintln!("cannot write {outp}: {e}{}", write_hint(outp, &e));
+                    std::process::exit(1);
+                });
+            let outp = &outp;
             let t1 = std::time::Instant::now();
             let (mut utts, mut units) = (0usize, 0usize);
             let mut failed = None;
@@ -991,7 +1145,7 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
                       ({:.0}x realtime)", secs / el.max(1e-6));
             println!("wrote {outp}");
         }
-        "text" => {
+        "text" | "speak" | "say" => {
             // text -> lexicon -> naming -> duration -> selection -> audio
             let marked = markup_flag(&a, &a[3]);
             let volume = volume_flag(&a);
@@ -1168,8 +1322,8 @@ z={z:>7.3}  -> {:.4} s", ceps::cart::segment_duration(z, st, 1.0)),
             println!("synth:  {:.2} s of audio in {:.1?}", secs, t2.elapsed());
             println!("total:  {:.0}x realtime",
                      secs / (sel_dt + t2.elapsed()).as_secs_f64());
-            wav::write(outp, &pcm, v.sps).unwrap();
-            println!("wrote {outp}");
+            let wrote = write_out(outp, &pcm, v.sps);
+            println!("wrote {wrote}");
         }
         "lex" => {
             let lexpath = std::env::var("CEPS_LEXICON")
@@ -1799,8 +1953,8 @@ path cost {:<9}  {:>7.1?}  {} joins",
             }
             println!("{n} periods in {} pieces -> {} samples",
                      starts.len().max(1), st.out.len());
-            wav::write(outp, &st.out, v.sps).unwrap();
-            println!("wrote {outp}");
+            let wrote = write_out(outp, &st.out, v.sps);
+            println!("wrote {wrote}");
         }
         "costs" => {
             // Replay the engine's own cost calls, captured by _out/run_cost.py.

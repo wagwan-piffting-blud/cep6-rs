@@ -68,15 +68,7 @@ fn default_roots(app: &tauri::App) -> Vec<PathBuf> {
     if let Ok(r) = app.path().resource_dir() {
         roots.push(r.join("voices"));
     }
-    if cfg!(windows) {
-        for pf in ["ProgramFiles", "ProgramFiles(x86)"] {
-            if let Ok(p) = std::env::var(pf) {
-                roots.push(Path::new(&p).join("Cepstral").join("voices"));
-            }
-        }
-    } else if cfg!(target_os = "linux") {
-        roots.push("/opt/swift/voices".into());
-    }
+    roots.extend(ceps::install::voice_roots());
     if cfg!(debug_assertions) {
         roots.push(Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     }

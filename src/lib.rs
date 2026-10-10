@@ -14,6 +14,7 @@ pub mod db;
 pub mod expr;
 pub mod f0;
 pub mod ceplex;
+pub mod install;
 pub mod lex;
 pub mod lts;
 pub mod markup;
